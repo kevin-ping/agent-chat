@@ -366,13 +366,17 @@ app.get('/api/rooms/:roomId/messages', (req, res) => {
   const room = stmts.getRoom.get(roomId);
   if (!room) return res.status(404).json({ error: 'Room not found' });
 
+  // Default limit to 100 to prevent loading too many messages
+  const DEFAULT_LIMIT = 100;
+  const MAX_LIMIT = 500;
+  let effectiveLimit = Math.min(limit ? parseInt(limit) : DEFAULT_LIMIT, MAX_LIMIT);
+
   let messages;
   if (after_sequence) {
     messages = stmts.getMessagesAfterSeq.all(roomId, parseInt(after_sequence));
-  } else if (limit) {
-    messages = stmts.getMessagesPaginated.all(roomId, parseInt(limit), parseInt(offset || 0));
   } else {
-    messages = stmts.getMessages.all(roomId);
+    // Use pagination with default limit
+    messages = stmts.getMessagesPaginated.all(roomId, effectiveLimit, parseInt(offset || 0));
   }
 
   res.json({
