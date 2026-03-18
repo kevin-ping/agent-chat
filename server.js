@@ -11,6 +11,27 @@ const fs = require('fs');
 const PORT = process.env.PORT || 3210;
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'chat.db');
 
+// ─── Rate Limiter for free mode ─────────────────────────────────────────────
+// Prevent agents from sending messages too quickly in free mode
+const lastMessageTime = new Map(); // key: "roomId:agentId" -> timestamp
+const RATE_LIMIT_MS = 3000; // 3 seconds cooldown
+
+function checkRateLimit(roomId, agentId) {
+  const key = `${roomId}:${agentId}`;
+  const lastTime = lastMessageTime.get(key) || 0;
+  const now = Date.now();
+  
+  if (now - lastTime < RATE_LIMIT_MS) {
+    return {
+      allowed: false,
+      remaining_ms: RATE_LIMIT_MS - (now - lastTime)
+    };
+  }
+  
+  lastMessageTime.set(key, now);
+  return { allowed: true };
+}
+
 // ─── Database Setup ─────────────────────────────────────────────────────────
 const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
@@ -61,6 +82,12 @@ db.exec(`
     FOREIGN KEY (room_id) REFERENCES rooms(id),
     FOREIGN KEY (agent_id) REFERENCES agents(id)
   );
+
+  CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at DATETIME DEFAULT (datetime('now'))
+  );
 `);
 
 // ─── Database Migrations ─────────────────────────────────────────────────────
@@ -103,18 +130,25 @@ const stmts = {
 
   // Messages
   insertMessage: db.prepare(`INSERT INTO messages (id, room_id, agent_id, content, sequence, msg_type, metadata) VALUES (?, ?, ?, ?, ?, ?, ?)`),
-  getMessages: db.prepare(`SELECT m.*, a.name as agent_name, a.avatar_emoji, a.avatar_url, a.color FROM messages m LEFT JOIN agents a ON m.agent_id = a.id WHERE m.room_id = ? ORDER BY m.sequence ASC`),
-  getMessagesPaginated: db.prepare(`SELECT m.*, a.name as agent_name, a.avatar_emoji, a.avatar_url, a.color FROM messages m LEFT JOIN agents a ON m.agent_id = a.id WHERE m.room_id = ? ORDER BY m.sequence ASC LIMIT ? OFFSET ?`),
-  getMessagesAfterSeq: db.prepare(`SELECT m.*, a.name as agent_name, a.avatar_emoji, a.avatar_url, a.color FROM messages m LEFT JOIN agents a ON m.agent_id = a.id WHERE m.room_id = ? AND m.sequence > ? ORDER BY m.sequence ASC`),
+  getMessages: db.prepare(`SELECT m.*, a.name as agent_name, a.avatar_emoji, a.avatar_url, a.color FROM messages m LEFT JOIN agents a ON m.agent_id = a.id WHERE m.room_id = ? ORDER BY m.sequence DESC`),
+  getMessagesPaginated: db.prepare(`SELECT m.*, a.name as agent_name, a.avatar_emoji, a.avatar_url, a.color FROM messages m LEFT JOIN agents a ON m.agent_id = a.id WHERE m.room_id = ? ORDER BY m.sequence DESC LIMIT ? OFFSET ?`),
+  getMessagesAfterSeq: db.prepare(`SELECT m.*, a.name as agent_name, a.avatar_emoji, a.avatar_url, a.color FROM messages m LEFT JOIN agents a ON m.agent_id = a.id WHERE m.room_id = ? AND m.sequence > ? ORDER BY m.sequence DESC`),
   getMaxSequence: db.prepare(`SELECT COALESCE(MAX(sequence), 0) as max_seq FROM messages WHERE room_id = ?`),
-  searchMessages: db.prepare(`SELECT m.*, a.name as agent_name, a.avatar_emoji, a.color FROM messages m LEFT JOIN agents a ON m.agent_id = a.id WHERE m.room_id = ? AND m.content LIKE ? ORDER BY m.sequence ASC LIMIT 50`),
+  searchMessages: db.prepare(`SELECT m.*, a.name as agent_name, a.avatar_emoji, a.color FROM messages m LEFT JOIN agents a ON m.agent_id = a.id WHERE m.room_id = ? AND m.content LIKE ? ORDER BY m.sequence DESC LIMIT 50`),
   searchAllMessages: db.prepare(`SELECT m.*, a.name as agent_name, a.avatar_emoji, a.color, r.name as room_name FROM messages m LEFT JOIN agents a ON m.agent_id = a.id LEFT JOIN rooms r ON m.room_id = r.id WHERE m.content LIKE ? ORDER BY m.created_at DESC LIMIT 50`),
   deleteRoomMessages: db.prepare(`DELETE FROM messages WHERE room_id = ?`),
+  deleteMessage: db.prepare(`DELETE FROM messages WHERE id = ?`),
+  getMessageById: db.prepare(`SELECT * FROM messages WHERE id = ?`),
 
   // Room agents
   addAgentToRoom: db.prepare(`INSERT OR IGNORE INTO room_agents (room_id, agent_id) VALUES (?, ?)`),
   getRoomAgents: db.prepare(`SELECT a.* FROM agents a INNER JOIN room_agents ra ON a.id = ra.agent_id WHERE ra.room_id = ?`),
   removeAgentFromRoom: db.prepare(`DELETE FROM room_agents WHERE room_id = ? AND agent_id = ?`),
+
+  // Settings
+  getSetting: db.prepare(`SELECT value FROM settings WHERE key = ?`),
+  setSetting: db.prepare(`INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))`),
+  getAllSettings: db.prepare(`SELECT * FROM settings`),
 };
 
 // ─── Turn-Taking Logic ──────────────────────────────────────────────────────
@@ -304,6 +338,27 @@ app.post('/api/rooms/:roomId/messages', (req, res) => {
   const room = stmts.getRoom.get(roomId);
   if (!room) return res.status(404).json({ error: 'Room not found' });
 
+  // Rate limit for free mode
+  if (room.turn_mode === 'free' && agent_id) {
+    const rateCheck = checkRateLimit(roomId, agent_id);
+    if (!rateCheck.allowed) {
+      return res.status(429).json({
+        error: `Rate limit: Please wait ${Math.ceil(rateCheck.remaining_ms / 1000)} seconds before sending another message`,
+        remaining_ms: rateCheck.remaining_ms
+      });
+    }
+  }
+
+  // Validate agent api_key
+  if (agent_id) {
+    const { api_key } = req.body;
+    const agent = stmts.getAgent.get(agent_id);
+    if (!agent) return res.status(404).json({ error: 'Agent not found' });
+    if (agent.api_key && agent.api_key !== api_key) {
+      return res.status(403).json({ error: 'Invalid api_key' });
+    }
+  }
+
   // Validate agent exists if provided
   if (agent_id) {
     const agent = stmts.getAgent.get(agent_id);
@@ -405,17 +460,45 @@ app.get('/api/search', (req, res) => {
   res.json({ query: q, results: messages });
 });
 
+// Default limits for context API
+const DEFAULT_LAST_N = 10;
+const MIN_LAST_N = 1;
+const MAX_LAST_N = 100;
+
 // ─── API Routes: Context (for agents to get conversation context) ───────────
 app.get('/api/rooms/:roomId/context', (req, res) => {
   const { roomId } = req.params;
-  const { last_n } = req.query;
+  const { last_n, agent_id } = req.query;
 
   const room = stmts.getRoom.get(roomId);
   if (!room) return res.status(404).json({ error: 'Room not found' });
 
-  const allMessages = stmts.getMessages.all(roomId);
-  const messages = last_n ? allMessages.slice(-parseInt(last_n)) : allMessages;
+  // Get settings from database
+  const settings = stmts.getAllSettings.all();
+  const settingsMap = {};
+  for (const s of settings) settingsMap[s.key] = parseInt(s.value) || DEFAULT_LAST_N;
+  
+  const minLimit = settingsMap.context_min_limit || MIN_LAST_N;
+  const maxLimit = settingsMap.context_max_limit || MAX_LAST_N;
+  const defaultLimit = settingsMap.context_default_limit || DEFAULT_LAST_N;
 
+  const allMessages = stmts.getMessages.all(roomId);
+  
+  // Default to defaultLimit if not specified, otherwise use the value (clamped)
+  let effectiveLimit = defaultLimit;
+  if (last_n) {
+    effectiveLimit = Math.min(Math.max(parseInt(last_n), minLimit), maxLimit);
+  }
+  
+  const messages = allMessages.slice(-effectiveLimit);
+
+  // Get agents list
+  const agents = stmts.getRoomAgents.all(roomId);
+  
+  // Build context info
+  const currentAgent = agent_id ? agents.find(a => a.id === agent_id) : null;
+  const otherAgents = agents.filter(a => a.id !== agent_id);
+  
   // Format as a conversation transcript for agent consumption
   const transcript = messages.map(m => ({
     role: m.agent_name || 'system',
@@ -424,10 +507,20 @@ app.get('/api/rooms/:roomId/context', (req, res) => {
     timestamp: m.created_at
   }));
 
+  // Build system prompt
+  let systemPrompt = '';
+  if (currentAgent) {
+    const otherNames = otherAgents.map(a => a.name).join(', ') || 'another agent';
+    systemPrompt = `你 [${currentAgent.name}] 正在和 ${otherNames} 讨论问题。\n请根据以下对话历史，回复对方的消息。\n\n对话历史：`;
+  }
+
   res.json({
     room: { id: room.id, name: room.name, current_turn: room.current_turn, turn_mode: room.turn_mode },
-    agents: stmts.getRoomAgents.all(roomId),
+    agents: agents,
     total_messages: allMessages.length,
+    effective_limit: effectiveLimit,
+    current_agent: currentAgent,
+    system_prompt: systemPrompt,
     transcript
   });
 });
@@ -452,6 +545,31 @@ app.delete('/api/rooms/:roomId/messages', (req, res) => {
   res.json({ ok: true });
 });
 
+// ─── API: Delete single message ───────────────────────────────────────────────
+app.delete('/api/messages/:messageId', (req, res) => {
+  const { messageId } = req.params;
+  const message = stmts.getMessageById.get(messageId);
+  if (!message) return res.status(404).json({ error: 'Message not found' });
+  
+  stmts.deleteMessage.run(messageId);
+  broadcast({ type: 'message_deleted', message_id: messageId, room_id: message.room_id });
+  res.json({ ok: true });
+});
+
+// ─── API: Batch delete messages ───────────────────────────────────────────────
+app.delete('/api/messages', (req, res) => {
+  const { ids, room_id } = req.body;
+  if (!ids || !Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'ids array is required' });
+  }
+  
+  const placeholders = ids.map(() => '?').join(',');
+  db.exec(`DELETE FROM messages WHERE id IN (${placeholders})`, ids);
+  
+  broadcast({ type: 'messages_deleted', message_ids: ids, room_id });
+  res.json({ ok: true, deleted_count: ids.length });
+});
+
 // ─── Agent Webhooks (notify agents when it's their turn) ────────────────────
 const agentWebhooks = new Map(); // agent_id -> callback URL
 
@@ -473,6 +591,40 @@ app.get('/api/webhooks', (req, res) => {
   const hooks = {};
   for (const [id, url] of agentWebhooks) hooks[id] = url;
   res.json(hooks);
+});
+
+// ─── API: Settings ───────────────────────────────────────────────────────────
+app.get('/api/settings', (req, res) => {
+  const settings = stmts.getAllSettings.all();
+  const result = {};
+  for (const s of settings) {
+    result[s.key] = s.value;
+  }
+  // Provide defaults if not set
+  result.context_default_limit = result.context_default_limit || String(DEFAULT_LAST_N);
+  result.context_max_limit = result.context_max_limit || String(MAX_LAST_N);
+  result.context_min_limit = result.context_min_limit || String(MIN_LAST_N);
+  res.json(result);
+});
+
+app.post('/api/settings', (req, res) => {
+  const { key, value } = req.body;
+  if (!key) return res.status(400).json({ error: 'key is required' });
+  
+  // Validate key
+  const allowedKeys = ['context_default_limit', 'context_max_limit', 'context_min_limit'];
+  if (!allowedKeys.includes(key)) {
+    return res.status(400).json({ error: `Invalid key. Allowed: ${allowedKeys.join(', ')}` });
+  }
+  
+  // Validate value
+  const numValue = parseInt(value);
+  if (isNaN(numValue)) {
+    return res.status(400).json({ error: 'value must be a number' });
+  }
+  
+  stmts.setSetting.run(key, String(numValue));
+  res.json({ ok: true, key, value: numValue });
 });
 
 async function notifyAgent(agentId, payload) {

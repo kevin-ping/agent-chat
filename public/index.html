@@ -287,6 +287,18 @@
 
   .chat-header-right { display: flex; align-items: center; gap: 8px; }
 
+  .select-mode-bar {
+    padding: 12px 24px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+
+  .select-mode-bar.visible { display: flex; }
+
   /* ── Search Bar ──────────────────────────────── */
   .search-container {
     padding: 12px 24px;
@@ -366,6 +378,50 @@
     align-items: baseline;
     gap: 8px;
     margin-bottom: 4px;
+  }
+
+  .message-delete-btn {
+    margin-left: auto;
+    background: none;
+    border: none;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.2s;
+    font-size: 12px;
+    padding: 2px 4px;
+  }
+
+  .message:hover .message-delete-btn {
+    opacity: 0.6;
+  }
+
+  .message-delete-btn:hover {
+    opacity: 1 !important;
+  }
+
+  .message-checkbox {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    margin-left: 8px;
+  }
+
+  .message.selectable {
+    cursor: pointer;
+  }
+
+  .message.selectable:hover {
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .message.selected {
+    background: rgba(99, 102, 241, 0.15);
+    border-left: 3px solid #6366f1;
+  }
+
+  .select-mode-bar .btn {
+    padding: 6px 12px;
+    font-size: 13px;
   }
 
   .message-author {
@@ -591,7 +647,10 @@
   <div class="sidebar-header">
     <div style="display:flex;align-items:center;justify-content:space-between;">
       <h1>⚡ Agent Chat</h1>
-      <button class="icon-btn" id="themeToggle" onclick="toggleTheme()" title="Toggle theme">🌙</button>
+      <div style="display:flex;gap:4px;">
+        <button class="icon-btn" onclick="showSettings()" title="Settings">⚙️</button>
+        <button class="icon-btn" id="themeToggle" onclick="toggleTheme()" title="Toggle theme">🌙</button>
+      </div>
     </div>
     <div class="subtitle">Self-hosted agent communication hub</div>
     <div class="connection-status">
@@ -638,6 +697,7 @@ WS   ws://host:port/ws</code></pre>
       <span class="turn-badge" id="turnBadge" style="display:none"></span>
     </div>
     <div class="chat-header-right">
+      <button class="btn btn-sm" onclick="toggleSelectMode()">☑️ Select</button>
       <button class="btn btn-sm" onclick="toggleSearch()">🔍 Search</button>
       <button class="btn btn-sm" onclick="clearRoom()">Clear</button>
       <button class="btn btn-sm btn-danger" onclick="deleteRoom()">Delete</button>
@@ -646,6 +706,14 @@ WS   ws://host:port/ws</code></pre>
 
   <div class="search-container" id="searchContainer">
     <input type="text" class="search-input" id="searchInput" placeholder="Search messages..." oninput="handleSearch(this.value)">
+  </div>
+
+  <div class="select-mode-bar" id="selectModeBar">
+    <span id="selectedCount">已选 0 条消息</span>
+    <div>
+      <button class="btn btn-primary" onclick="deleteSelectedMessages()">删除选中</button>
+      <button class="btn" onclick="toggleSelectMode()">取消</button>
+    </div>
   </div>
 
   <div class="messages-area" id="messagesArea">
@@ -809,6 +877,34 @@ WS   ws://host:port/ws</code></pre>
   </div>
 </div>
 
+<!-- Settings Modal -->
+<div class="modal-overlay" id="settingsModal">
+  <div class="modal">
+    <h3>⚙️ Settings</h3>
+    <div style="display:flex;flex-direction:column;gap:16px;margin-top:16px;">
+      <div>
+        <label style="display:block;margin-bottom:4px;font-weight:500;">Context Default Limit</label>
+        <input type="number" id="settingDefaultLimit" min="1" max="100" value="10" style="width:100%;padding:8px;border-radius:4px;border:1px solid var(--border);background:var(--bg-input);color:var(--text);">
+        <small style="color:var(--text-dim);">Default number of messages to return when /context is called without last_n parameter</small>
+      </div>
+      <div>
+        <label style="display:block;margin-bottom:4px;font-weight:500;">Context Min Limit</label>
+        <input type="number" id="settingMinLimit" min="1" max="100" value="1" style="width:100%;padding:8px;border-radius:4px;border:1px solid var(--border);background:var(--bg-input);color:var(--text);">
+        <small style="color:var(--text-dim);">Minimum allowed value for last_n parameter</small>
+      </div>
+      <div>
+        <label style="display:block;margin-bottom:4px;font-weight:500;">Context Max Limit</label>
+        <input type="number" id="settingMaxLimit" min="1" max="500" value="100" style="width:100%;padding:8px;border-radius:4px;border:1px solid var(--border);background:var(--bg-input);color:var(--text);">
+        <small style="color:var(--text-dim);">Maximum allowed value for last_n parameter</small>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModals()">Cancel</button>
+      <button class="btn btn-accent" onclick="saveSettings()">Save</button>
+    </div>
+  </div>
+</div>
+
 <script>
   // ─── State ──────────────────────────────────────────────────────────────
   let ws = null;
@@ -817,7 +913,9 @@ WS   ws://host:port/ws</code></pre>
     agents: [],
     currentRoom: null,
     messages: [],
-    searchMode: false
+    searchMode: false,
+    selectMode: false,
+    selectedMessages: []
   };
 
   // ─── API Helpers ────────────────────────────────────────────────────────
@@ -844,6 +942,14 @@ WS   ws://host:port/ws</code></pre>
     },
     async del(path) {
       const res = await fetch(`/api${path}`, { method: 'DELETE' });
+      return res.json();
+    },
+    async batchDelete(path, data) {
+      const res = await fetch(`/api${path}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
       return res.json();
     }
   };
@@ -922,6 +1028,20 @@ WS   ws://host:port/ws</code></pre>
       case 'messages_cleared':
         if (state.currentRoom === data.room_id) {
           state.messages = [];
+          renderMessages();
+        }
+        break;
+
+      case 'message_deleted':
+        if (state.currentRoom === data.room_id) {
+          state.messages = state.messages.filter(m => m.id !== data.message_id);
+          renderMessages();
+        }
+        break;
+
+      case 'messages_deleted':
+        if (state.currentRoom === data.room_id) {
+          state.messages = state.messages.filter(m => !data.message_ids.includes(m.id));
           renderMessages();
         }
         break;
@@ -1009,13 +1129,15 @@ WS   ws://host:port/ws</code></pre>
       }
 
       return `
-        <div class="message">
+        <div class="message ${state.selectMode ? 'selectable' : ''} ${state.selectedMessages.includes(m.id) ? 'selected' : ''}" data-message-id="${m.id}" ${state.selectMode ? `onclick="toggleMessageSelect('${m.id}')"` : ''}>
           <div class="message-avatar" style="background:${m.color || '#333'}22">${m.avatar_url ? `<img src="${m.avatar_url}" class="message-avatar-img" alt="${esc(m.agent_name)}">` : (m.avatar_emoji || '🤖')}</div>
           <div class="message-body">
             <div class="message-header">
               <span class="message-author" style="color:${m.color || '#e4e4e8'}">${esc(m.agent_name || 'Unknown')}</span>
               <span class="message-seq">#${m.sequence}</span>
               <span class="message-time">${formatTime(m.created_at)}</span>
+              <button class="message-delete-btn" onclick="deleteMessage('${m.id}')" title="Delete this message">🗑️</button>
+              ${state.selectMode ? `<input type="checkbox" class="message-checkbox" data-id="${m.id}" ${state.selectedMessages.includes(m.id) ? 'checked' : ''} onclick="event.stopPropagation()" onchange="handleCheckboxChange(this)">` : ''}
             </div>
             <div class="message-content">${content}</div>
           </div>
@@ -1053,7 +1175,8 @@ WS   ws://host:port/ws</code></pre>
 
     // Load messages
     const data = await api.get(`/rooms/${roomId}/messages`);
-    state.messages = data.messages;
+    // Reverse to show newest at top
+    state.messages = data.messages.reverse();
     renderMessages();
     updateTurnBadge(data.room.current_turn);
     scrollToBottom();
@@ -1114,6 +1237,56 @@ WS   ws://host:port/ws</code></pre>
     await api.del(`/rooms/${state.currentRoom}`);
   }
 
+  async function deleteMessage(messageId) {
+    if (!confirm('Delete this message?')) return;
+    await api.del(`/messages/${messageId}`);
+    // Remove from local state
+    state.messages = state.messages.filter(m => m.id !== messageId);
+    renderMessages();
+  }
+
+  function toggleSelectMode() {
+    state.selectMode = !state.selectMode;
+    state.selectedMessages = [];
+    document.getElementById('selectModeBar').classList.toggle('visible', state.selectMode);
+    renderMessages();
+  }
+
+  function toggleMessageSelect(messageId) {
+    if (state.selectedMessages.includes(messageId)) {
+      state.selectedMessages = state.selectedMessages.filter(id => id !== messageId);
+    } else {
+      state.selectedMessages.push(messageId);
+    }
+    document.getElementById('selectedCount').textContent = `已选 ${state.selectedMessages.length} 条消息`;
+    renderMessages();
+  }
+
+  function handleCheckboxChange(checkbox) {
+    const id = checkbox.dataset.id;
+    if (checkbox.checked) {
+      state.selectedMessages.push(id);
+    } else {
+      state.selectedMessages = state.selectedMessages.filter(mid => mid !== id);
+    }
+    document.getElementById('selectedCount').textContent = `已选 ${state.selectedMessages.length} 条消息`;
+  }
+
+  async function deleteSelectedMessages() {
+    if (state.selectedMessages.length === 0) return;
+    if (!confirm(`删除 ${state.selectedMessages.length} 条消息?`)) return;
+    
+    await api.batchDelete('/messages', {
+      ids: state.selectedMessages,
+      room_id: state.currentRoom
+    });
+    
+    state.messages = state.messages.filter(m => !state.selectedMessages.includes(m.id));
+    state.selectedMessages = [];
+    toggleSelectMode();
+    renderMessages();
+  }
+
   // ─── Search ─────────────────────────────────────────────────────────────
   function toggleSearch() {
     const container = document.getElementById('searchContainer');
@@ -1167,6 +1340,43 @@ WS   ws://host:port/ws</code></pre>
 
   function closeModals() {
     document.querySelectorAll('.modal-overlay').forEach(m => m.classList.remove('visible'));
+  }
+
+  async function showSettings() {
+    closeModals();
+    // Load current settings
+    try {
+      const settings = await api.get('/settings');
+      document.getElementById('settingDefaultLimit').value = settings.context_default_limit || 10;
+      document.getElementById('settingMinLimit').value = settings.context_min_limit || 1;
+      document.getElementById('settingMaxLimit').value = settings.context_max_limit || 100;
+    } catch (e) {
+      console.error('Failed to load settings:', e);
+    }
+    document.getElementById('settingsModal').classList.add('visible');
+  }
+
+  async function saveSettings() {
+    const defaultLimit = parseInt(document.getElementById('settingDefaultLimit').value);
+    const minLimit = parseInt(document.getElementById('settingMinLimit').value);
+    const maxLimit = parseInt(document.getElementById('settingMaxLimit').value);
+
+    // Validate
+    if (minLimit < 1 || maxLimit > 500 || minLimit > maxLimit) {
+      return alert('Invalid limits: min >= 1, max <= 500, min <= max');
+    }
+    if (defaultLimit < minLimit || defaultLimit > maxLimit) {
+      return alert('Default limit must be between min and max');
+    }
+
+    try {
+      await api.post('/settings', { key: 'context_default_limit', value: defaultLimit });
+      await api.post('/settings', { key: 'context_min_limit', value: minLimit });
+      await api.post('/settings', { key: 'context_max_limit', value: maxLimit });
+      closeModals();
+    } catch (e) {
+      alert('Failed to save settings: ' + e.message);
+    }
   }
 
   async function createAgent() {
