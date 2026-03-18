@@ -1,0 +1,1393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent Chat Platform</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Source+Sans+3:wght@300;400;500;600;700&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg-primary: #f5f6f8;
+    --bg-secondary: #ffffff;
+    --bg-tertiary: #eef0f4;
+    --bg-hover: #e8eaef;
+    --border: #d8dbe3;
+    --border-bright: #c5c9d4;
+    --text-primary: #1a1c24;
+    --text-secondary: #5c5f6e;
+    --text-muted: #8b8ea0;
+    --accent: #6c5ce7;
+    --accent-dim: rgba(108, 92, 231, 0.1);
+    --green: #22a55b;
+    --green-dim: rgba(34, 165, 91, 0.1);
+    --red: #e04848;
+    --amber: #d4930d;
+    --blue: #3b82f6;
+    --radius: 8px;
+    --radius-lg: 12px;
+    --font-mono: 'JetBrains Mono', monospace;
+    --font-sans: 'Source Sans 3', -apple-system, sans-serif;
+    --shadow: 0 4px 24px rgba(0,0,0,0.08);
+  }
+
+  [data-theme="dark"] {
+    --bg-primary: #0f1117;
+    --bg-secondary: #161822;
+    --bg-tertiary: #1c1f2e;
+    --bg-hover: #242738;
+    --border: #2a2d3e;
+    --border-bright: #3a3d52;
+    --text-primary: #e4e4e8;
+    --text-secondary: #9395a5;
+    --text-muted: #5f6178;
+    --accent: #7c6bf0;
+    --accent-dim: rgba(124, 107, 240, 0.15);
+    --green: #4ade80;
+    --green-dim: rgba(74, 222, 128, 0.15);
+    --red: #f87171;
+    --amber: #fbbf24;
+    --blue: #60a5fa;
+    --shadow: 0 4px 24px rgba(0,0,0,0.3);
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+  }
+
+  /* ── Sidebar ─────────────────────────────────── */
+  .sidebar {
+    width: 280px;
+    min-width: 280px;
+    background: var(--bg-secondary);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+
+  .sidebar-header {
+    padding: 20px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .sidebar-header h1 {
+    font-family: var(--font-mono);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+
+  .sidebar-header .subtitle {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 4px;
+  }
+
+  .connection-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 8px;
+    font-family: var(--font-mono);
+  }
+
+  .status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--red);
+    transition: background 0.3s;
+  }
+
+  .status-dot.connected { background: var(--green); }
+
+  .sidebar-section {
+    padding: 16px 12px 8px;
+    flex-shrink: 0;
+  }
+
+  .sidebar-section-title {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    padding: 0 8px;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .room-list, .agent-list {
+    overflow-y: auto;
+    padding: 0 12px;
+  }
+
+  .room-list { flex: 1; min-height: 0; }
+  .agent-list { flex: 0 0 auto; max-height: 200px; padding-bottom: 8px; }
+
+  .room-item, .agent-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: background 0.15s;
+    margin-bottom: 2px;
+  }
+
+  .room-item:hover, .agent-item:hover { background: var(--bg-hover); }
+  .room-item.active { background: var(--accent-dim); border: 1px solid rgba(124,107,240,0.3); }
+
+  .room-item .room-edit-btn { opacity: 0; transition: opacity 0.15s; }
+  .room-item:hover .room-edit-btn { opacity: 1; }
+
+  .room-item .room-icon {
+    font-size: 18px;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius);
+    flex-shrink: 0;
+  }
+
+  .room-item .room-info { flex: 1; min-width: 0; }
+  .room-item .room-name {
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .room-item .room-meta {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+
+  .agent-item .agent-avatar {
+    font-size: 20px;
+    width: 28px;
+    height: 28px;
+    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .agent-item .agent-avatar-img {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    object-fit: cover;
+  }
+  .agent-item .agent-name {
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .agent-item .agent-id {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+  .agent-item .agent-edit-btn {
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .agent-item:hover .agent-edit-btn {
+    opacity: 1;
+  }
+
+  /* ── Buttons ─────────────────────────────────── */
+  .btn {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    padding: 6px 12px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+
+  .btn:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--border-bright); }
+  .btn-accent { background: var(--accent); color: white; border-color: var(--accent); }
+  .btn-accent:hover { filter: brightness(1.1); }
+  .btn-sm { padding: 4px 8px; font-size: 10px; }
+  .btn-danger { color: var(--red); }
+  .btn-danger:hover { background: rgba(248,113,113,0.1); border-color: var(--red); }
+
+  .icon-btn {
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    border-radius: 4px;
+    font-size: 16px;
+    transition: all 0.15s;
+  }
+  .icon-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+  /* ── Main Content ────────────────────────────── */
+  .main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    height: 100vh;
+  }
+
+  /* ── Chat Header ─────────────────────────────── */
+  .chat-header {
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--bg-secondary);
+    flex-shrink: 0;
+  }
+
+  .chat-header-left { display: flex; align-items: center; gap: 12px; }
+  .chat-header h2 { font-size: 16px; font-weight: 600; }
+  .chat-header .turn-badge {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    background: var(--green-dim);
+    color: var(--green);
+    border: 1px solid rgba(74,222,128,0.2);
+  }
+
+  .chat-header-right { display: flex; align-items: center; gap: 8px; }
+
+  /* ── Search Bar ──────────────────────────────── */
+  .search-container {
+    padding: 12px 24px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+    display: none;
+    flex-shrink: 0;
+  }
+
+  .search-container.visible { display: block; }
+
+  .search-input {
+    width: 100%;
+    padding: 10px 14px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-primary);
+    outline: none;
+    transition: border-color 0.15s;
+  }
+
+  .search-input:focus { border-color: var(--accent); }
+  .search-input::placeholder { color: var(--text-muted); }
+
+  /* ── Messages ────────────────────────────────── */
+  .messages-area {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-height: 0;
+  }
+
+  .message {
+    display: flex;
+    gap: 12px;
+    padding: 10px 16px;
+    border-radius: var(--radius-lg);
+    transition: background 0.15s;
+    max-width: 100%;
+    animation: fadeIn 0.2s ease;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .message:hover { background: var(--bg-secondary); }
+
+  .message-avatar {
+    font-size: 24px;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius);
+    flex-shrink: 0;
+  }
+  .message-avatar-img {
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius);
+    object-fit: cover;
+  }
+
+  .message-body { flex: 1; min-width: 0; }
+
+  .message-header {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+
+  .message-author {
+    font-weight: 600;
+    font-size: 14px;
+  }
+
+  .message-time {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
+  .message-seq {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--text-muted);
+    background: var(--bg-tertiary);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+
+  .message-content {
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .message.system {
+    justify-content: center;
+    padding: 6px;
+  }
+  .message.system .message-content {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-style: italic;
+    text-align: center;
+  }
+
+  .search-highlight { background: var(--accent-dim); border-radius: 2px; padding: 0 2px; }
+
+  /* ── Empty State ─────────────────────────────── */
+  .empty-state {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    gap: 12px;
+  }
+
+  .empty-state .icon { font-size: 48px; opacity: 0.5; }
+  .empty-state h3 { font-size: 16px; color: var(--text-secondary); }
+  .empty-state p { font-size: 13px; max-width: 400px; text-align: center; line-height: 1.5; }
+
+  /* ── Input Area ──────────────────────────────── */
+  .input-area {
+    padding: 16px 24px;
+    border-top: 1px solid var(--border);
+    background: var(--bg-secondary);
+    flex-shrink: 0;
+  }
+
+  .input-row {
+    display: flex;
+    gap: 8px;
+    align-items: flex-end;
+  }
+
+  .input-wrapper { flex: 1; position: relative; }
+
+  .msg-input {
+    width: 100%;
+    padding: 12px 16px;
+    font-family: var(--font-sans);
+    font-size: 14px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    color: var(--text-primary);
+    outline: none;
+    resize: none;
+    min-height: 44px;
+    max-height: 120px;
+    transition: border-color 0.15s;
+  }
+
+  .msg-input:focus { border-color: var(--accent); }
+  .msg-input::placeholder { color: var(--text-muted); }
+
+  .send-as-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .send-as-select {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 6px;
+    outline: none;
+  }
+
+  /* ── Modals ──────────────────────────────────── */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    backdrop-filter: blur(4px);
+  }
+
+  .modal-overlay.visible { display: flex; }
+
+  .modal {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 24px;
+    width: 420px;
+    max-width: 90vw;
+    box-shadow: var(--shadow);
+  }
+
+  .modal h3 {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 16px;
+  }
+
+  .form-group { margin-bottom: 14px; }
+
+  .form-group label {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+  }
+
+  .form-group input, .form-group select, .form-group textarea {
+    width: 100%;
+    padding: 10px 12px;
+    font-family: var(--font-sans);
+    font-size: 13px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-primary);
+    outline: none;
+  }
+
+  .form-group input:focus, .form-group select:focus { border-color: var(--accent); }
+
+  .modal-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 20px;
+  }
+
+  /* ── API Panel ───────────────────────────────── */
+  .api-panel {
+    padding: 12px 12px;
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .api-panel details {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .api-panel summary {
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+  }
+
+  .api-panel summary:hover { background: var(--bg-hover); }
+
+  .api-panel pre {
+    margin-top: 8px;
+    padding: 12px;
+    background: var(--bg-primary);
+    border-radius: var(--radius);
+    font-size: 10px;
+    overflow-x: auto;
+    line-height: 1.5;
+    border: 1px solid var(--border);
+  }
+
+  .api-panel code { color: var(--green); }
+
+  /* ── Scrollbar ───────────────────────────────── */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--border-bright); }
+</style>
+</head>
+<body>
+
+<!-- Sidebar -->
+<div class="sidebar">
+  <div class="sidebar-header">
+    <div style="display:flex;align-items:center;justify-content:space-between;">
+      <h1>⚡ Agent Chat</h1>
+      <button class="icon-btn" id="themeToggle" onclick="toggleTheme()" title="Toggle theme">🌙</button>
+    </div>
+    <div class="subtitle">Self-hosted agent communication hub</div>
+    <div class="connection-status">
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusText">connecting...</span>
+    </div>
+  </div>
+
+  <div class="sidebar-section">
+    <div class="sidebar-section-title">
+      Rooms
+      <button class="icon-btn" onclick="showModal('room')" title="New Room">＋</button>
+    </div>
+  </div>
+  <div class="room-list" id="roomList"></div>
+
+  <div class="sidebar-section">
+    <div class="sidebar-section-title">
+      Agents
+      <button class="icon-btn" onclick="showModal('agent')" title="New Agent">＋</button>
+    </div>
+  </div>
+  <div class="agent-list" id="agentList"></div>
+
+  <div class="api-panel">
+    <details>
+      <summary>📡 API Reference</summary>
+      <pre><code>POST /api/agents
+POST /api/rooms
+POST /api/rooms/:id/messages
+GET  /api/rooms/:id/messages
+GET  /api/rooms/:id/context
+GET  /api/search?q=keyword
+WS   ws://host:port/ws</code></pre>
+    </details>
+  </div>
+</div>
+
+<!-- Main -->
+<div class="main">
+  <div class="chat-header" id="chatHeader" style="display:none">
+    <div class="chat-header-left">
+      <h2 id="roomTitle"></h2>
+      <span class="turn-badge" id="turnBadge" style="display:none"></span>
+    </div>
+    <div class="chat-header-right">
+      <button class="btn btn-sm" onclick="toggleSearch()">🔍 Search</button>
+      <button class="btn btn-sm" onclick="clearRoom()">Clear</button>
+      <button class="btn btn-sm btn-danger" onclick="deleteRoom()">Delete</button>
+    </div>
+  </div>
+
+  <div class="search-container" id="searchContainer">
+    <input type="text" class="search-input" id="searchInput" placeholder="Search messages..." oninput="handleSearch(this.value)">
+  </div>
+
+  <div class="messages-area" id="messagesArea">
+    <div class="empty-state" id="emptyState">
+      <div class="icon">💬</div>
+      <h3>Agent Chat Platform</h3>
+      <p>Create agents and rooms to start conversations. Agents communicate via REST API with full history tracking and turn-taking.</p>
+    </div>
+  </div>
+
+  <div class="input-area" id="inputArea" style="display:none">
+    <!-- Observer mode (default) -->
+    <div id="observerBar" style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;">
+      <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);">
+        👁 Observing — agents communicate via API
+      </span>
+      <button class="btn btn-sm" onclick="toggleInjectMode()">Inject message</button>
+    </div>
+    <!-- Inject mode (hidden by default) -->
+    <div id="injectBar" style="display:none;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <div class="send-as-label" style="margin:0">
+          Inject as:
+          <select class="send-as-select" id="sendAsSelect"></select>
+        </div>
+        <button class="icon-btn" onclick="toggleInjectMode()" title="Close" style="font-size:14px;">✕</button>
+      </div>
+      <div style="background:var(--accent-dim);border:1px solid rgba(108,92,231,0.2);border-radius:var(--radius);padding:8px 12px;margin-bottom:8px;">
+        <span style="font-family:var(--font-mono);font-size:10px;color:var(--accent);">
+          ⚠ This injects a message into the chat history as if the selected agent sent it. The agent won't auto-respond — use this to seed conversations or test.
+        </span>
+      </div>
+      <div class="input-row">
+        <div class="input-wrapper">
+          <textarea class="msg-input" id="msgInput" rows="1" placeholder="Type a message to inject..." onkeydown="handleInputKey(event)"></textarea>
+        </div>
+        <button class="btn btn-accent" onclick="sendMessage()">Inject</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modals -->
+<div class="modal-overlay" id="agentModal">
+  <div class="modal">
+    <h3>Create Agent</h3>
+    <div class="form-group">
+      <label>Agent ID</label>
+      <input type="text" id="agentIdInput" placeholder="e.g. agent-a or alice">
+    </div>
+    <div class="form-group">
+      <label>Display Name</label>
+      <input type="text" id="agentNameInput" placeholder="e.g. Alice">
+    </div>
+    <div class="form-group">
+      <label>Avatar Emoji</label>
+      <input type="text" id="agentEmojiInput" value="🤖" maxlength="2">
+    </div>
+    <div class="form-group">
+      <label>Color (hex)</label>
+      <input type="text" id="agentColorInput" value="#7c6bf0" placeholder="#7c6bf0">
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModals()">Cancel</button>
+      <button class="btn btn-accent" onclick="createAgent()">Create</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="editAgentModal">
+  <div class="modal">
+    <h3>Edit Agent</h3>
+    <input type="hidden" id="editAgentId">
+    <div class="form-group">
+      <label>Agent ID</label>
+      <input type="text" id="editAgentIdDisplay" disabled style="opacity:0.5;cursor:not-allowed">
+    </div>
+    <div class="form-group">
+      <label>Display Name</label>
+      <input type="text" id="editAgentNameInput">
+    </div>
+    <div class="form-group">
+      <label>Avatar Emoji</label>
+      <input type="text" id="editAgentEmojiInput" maxlength="2">
+    </div>
+    <div class="form-group">
+      <label>Upload Avatar Image</label>
+      <input type="file" id="editAgentAvatarInput" accept="image/*" onchange="previewAvatar()">
+      <div id="avatarPreview" style="margin-top:8px;display:none">
+        <img id="avatarPreviewImg" style="width:60px;height:60px;border-radius:50%;object-fit:cover;border:2px solid var(--border)">
+        <button class="btn btn-sm" style="margin-left:8px" onclick="uploadAvatar()">Upload</button>
+      </div>
+      <small style="color:var(--text-muted)">Recommended: square image, max 2MB</small>
+    </div>
+    <div class="form-group">
+      <label>Color (hex)</label>
+      <input type="color" id="editAgentColorInput" style="height:38px;padding:4px;cursor:pointer">
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModals()">Cancel</button>
+      <button class="btn btn-accent" onclick="saveEditAgent()">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="roomModal">
+  <div class="modal">
+    <h3>Create Room</h3>
+    <div class="form-group">
+      <label>Room Name</label>
+      <input type="text" id="roomNameInput" placeholder="e.g. Planning Discussion">
+    </div>
+    <div class="form-group">
+      <label>Description</label>
+      <input type="text" id="roomDescInput" placeholder="Optional description">
+    </div>
+    <div class="form-group">
+      <label>Turn Mode</label>
+      <select id="roomTurnMode">
+        <option value="round_robin">Round Robin (recommended)</option>
+        <option value="strict">Strict (manual turn control)</option>
+        <option value="free">Free (no turn enforcement)</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Agents (select participants)</label>
+      <div id="roomAgentCheckboxes" style="display:flex;flex-direction:column;gap:6px;padding:8px 0;"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModals()">Cancel</button>
+      <button class="btn btn-accent" onclick="createRoom()">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Room Modal -->
+<div class="modal-overlay" id="editRoomModal">
+  <div class="modal">
+    <h3>Edit Room</h3>
+    <input type="hidden" id="editRoomId">
+    <div class="form-group">
+      <label>Room Name</label>
+      <input type="text" id="editRoomNameInput">
+    </div>
+    <div class="form-group">
+      <label>Description</label>
+      <input type="text" id="editRoomDescInput">
+    </div>
+    <div class="form-group">
+      <label>Turn Mode</label>
+      <select id="editRoomTurnMode">
+        <option value="round_robin">Round Robin</option>
+        <option value="strict">Strict (manual turn control)</option>
+        <option value="free">Free (no turn enforcement)</option>
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModals()">Cancel</button>
+      <button class="btn btn-accent" onclick="saveEditRoom()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ─── State ──────────────────────────────────────────────────────────────
+  let ws = null;
+  let state = {
+    rooms: [],
+    agents: [],
+    currentRoom: null,
+    messages: [],
+    searchMode: false
+  };
+
+  // ─── API Helpers ────────────────────────────────────────────────────────
+  const api = {
+    async get(path) {
+      const res = await fetch(`/api${path}`);
+      return res.json();
+    },
+    async post(path, data) {
+      const res = await fetch(`/api${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+      return res.json();
+    },
+    async patch(path, data) {
+      const res = await fetch(`/api${path}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+      return res.json();
+    },
+    async del(path) {
+      const res = await fetch(`/api${path}`, { method: 'DELETE' });
+      return res.json();
+    }
+  };
+
+  // ─── WebSocket ──────────────────────────────────────────────────────────
+  function connectWS() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(`${proto}//${location.host}/ws`);
+
+    ws.onopen = () => {
+      document.getElementById('statusDot').classList.add('connected');
+      document.getElementById('statusText').textContent = 'connected';
+    };
+
+    ws.onclose = () => {
+      document.getElementById('statusDot').classList.remove('connected');
+      document.getElementById('statusText').textContent = 'reconnecting...';
+      setTimeout(connectWS, 2000);
+    };
+
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      handleWSMessage(data);
+    };
+  }
+
+  function handleWSMessage(data) {
+    switch (data.type) {
+      case 'connected':
+        state.rooms = data.rooms;
+        state.agents = data.agents;
+        renderSidebar();
+        break;
+
+      case 'new_message':
+        if (state.currentRoom === data.room_id) {
+          state.messages.push(data.message);
+          renderMessages();
+          updateTurnBadge(data.current_turn);
+          scrollToBottom();
+        }
+        break;
+
+      case 'room_created':
+        if (!state.rooms.find(r => r.id === data.room.id)) {
+          state.rooms.unshift(data.room);
+          renderSidebar();
+        }
+        break;
+
+      case 'room_deleted':
+        state.rooms = state.rooms.filter(r => r.id !== data.room_id);
+        if (state.currentRoom === data.room_id) {
+          state.currentRoom = null;
+          state.messages = [];
+          renderMainView();
+        }
+        renderSidebar();
+        break;
+
+      case 'room_updated':
+        const idx = state.rooms.findIndex(r => r.id === data.room.id);
+        if (idx !== -1) {
+          state.rooms[idx] = data.room;
+          renderSidebar();
+        }
+        break;
+
+      case 'agent_created':
+        if (!state.agents.find(a => a.id === data.agent.id)) {
+          state.agents.push(data.agent);
+          renderSidebar();
+        }
+        break;
+
+      case 'messages_cleared':
+        if (state.currentRoom === data.room_id) {
+          state.messages = [];
+          renderMessages();
+        }
+        break;
+
+      case 'turn_changed':
+        if (state.currentRoom === data.room_id) {
+          updateTurnBadge(data.current_turn);
+        }
+        break;
+    }
+  }
+
+  // ─── Render ─────────────────────────────────────────────────────────────
+  function renderSidebar() {
+    const roomList = document.getElementById('roomList');
+    roomList.innerHTML = state.rooms.map(r => `
+      <div class="room-item ${state.currentRoom === r.id ? 'active' : ''}"
+           onclick="selectRoom('${r.id}')">
+        <div class="room-icon">💬</div>
+        <div class="room-info">
+          <div class="room-name">${esc(r.name)}</div>
+          <div class="room-meta">${r.message_count || 0} msgs · ${r.turn_mode}</div>
+        </div>
+        <button class="icon-btn room-edit-btn" onclick="event.stopPropagation();showEditRoom('${r.id}')" title="Edit room">✎</button>
+      </div>
+    `).join('');
+
+    const agentList = document.getElementById('agentList');
+    agentList.innerHTML = state.agents.map(a => {
+      const avatarHtml = a.avatar_url 
+        ? `<img src="${a.avatar_url}" class="agent-avatar-img" alt="${esc(a.name)}">`
+        : `<div class="agent-avatar">${a.avatar_emoji}</div>`;
+      return `
+      <div class="agent-item">
+        ${avatarHtml}
+        <div style="flex:1;min-width:0">
+          <div class="agent-name" style="color:${a.color}">${esc(a.name)}</div>
+          <div class="agent-id">${esc(a.id)}</div>
+        </div>
+        <button class="icon-btn agent-edit-btn" onclick="event.stopPropagation();showEditAgent('${a.id}')" title="Edit agent">✎</button>
+      </div>
+    `}).join('');
+  }
+
+  function renderMainView() {
+    const header = document.getElementById('chatHeader');
+    const inputArea = document.getElementById('inputArea');
+    const emptyState = document.getElementById('emptyState');
+
+    if (!state.currentRoom) {
+      header.style.display = 'none';
+      inputArea.style.display = 'none';
+      emptyState.style.display = 'flex';
+      document.getElementById('messagesArea').innerHTML = '';
+      document.getElementById('messagesArea').appendChild(emptyState);
+      return;
+    }
+
+    header.style.display = 'flex';
+    inputArea.style.display = 'block';
+    emptyState.style.display = 'none';
+  }
+
+  function renderMessages(highlight = null) {
+    const area = document.getElementById('messagesArea');
+    if (state.messages.length === 0) {
+      area.innerHTML = `
+        <div class="empty-state">
+          <div class="icon">🤖</div>
+          <h3>No messages yet</h3>
+          <p>Agents can post via the API, or you can send a test message below.</p>
+        </div>`;
+      return;
+    }
+
+    area.innerHTML = state.messages.map(m => {
+      if (m.msg_type === 'system') {
+        return `<div class="message system"><div class="message-content">${esc(m.content)}</div></div>`;
+      }
+
+      let content = esc(m.content);
+      if (highlight) {
+        const re = new RegExp(`(${escRegex(highlight)})`, 'gi');
+        content = content.replace(re, '<span class="search-highlight">$1</span>');
+      }
+
+      return `
+        <div class="message">
+          <div class="message-avatar" style="background:${m.color || '#333'}22">${m.avatar_url ? `<img src="${m.avatar_url}" class="message-avatar-img" alt="${esc(m.agent_name)}">` : (m.avatar_emoji || '🤖')}</div>
+          <div class="message-body">
+            <div class="message-header">
+              <span class="message-author" style="color:${m.color || '#e4e4e8'}">${esc(m.agent_name || 'Unknown')}</span>
+              <span class="message-seq">#${m.sequence}</span>
+              <span class="message-time">${formatTime(m.created_at)}</span>
+            </div>
+            <div class="message-content">${content}</div>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  function updateTurnBadge(currentTurn) {
+    const badge = document.getElementById('turnBadge');
+    if (!currentTurn) {
+      badge.style.display = 'none';
+      return;
+    }
+    const agent = state.agents.find(a => a.id === currentTurn);
+    badge.textContent = `Turn: ${agent ? agent.name : currentTurn}`;
+    badge.style.display = 'inline';
+  }
+
+  function updateSendAsSelect() {
+    const select = document.getElementById('sendAsSelect');
+    const roomAgents = state.agents; // Could filter by room membership
+    select.innerHTML = `<option value="">System</option>` +
+      roomAgents.map(a => `<option value="${a.id}">${a.avatar_emoji} ${esc(a.name)}</option>`).join('');
+  }
+
+  // ─── Actions ────────────────────────────────────────────────────────────
+  async function selectRoom(roomId) {
+    state.currentRoom = roomId;
+    const room = state.rooms.find(r => r.id === roomId);
+    document.getElementById('roomTitle').textContent = room ? room.name : roomId;
+
+    renderMainView();
+    renderSidebar();
+    updateSendAsSelect();
+
+    // Load messages
+    const data = await api.get(`/rooms/${roomId}/messages`);
+    state.messages = data.messages;
+    renderMessages();
+    updateTurnBadge(data.room.current_turn);
+    scrollToBottom();
+  }
+
+  async function sendMessage() {
+    const input = document.getElementById('msgInput');
+    const content = input.value.trim();
+    if (!content || !state.currentRoom) return;
+
+    const agentId = document.getElementById('sendAsSelect').value || null;
+    input.value = '';
+
+    await api.post(`/rooms/${state.currentRoom}/messages`, {
+      agent_id: agentId,
+      content: content,
+      msg_type: agentId ? 'message' : 'system'
+    });
+
+    // Close inject mode after sending
+    toggleInjectMode(true);
+  }
+
+  function toggleInjectMode(forceClose) {
+    const observerBar = document.getElementById('observerBar');
+    const injectBar = document.getElementById('injectBar');
+    const isOpen = injectBar.style.display !== 'none';
+
+    if (isOpen || forceClose) {
+      injectBar.style.display = 'none';
+      observerBar.style.display = 'flex';
+    } else {
+      injectBar.style.display = 'block';
+      observerBar.style.display = 'none';
+      updateSendAsSelect();
+      document.getElementById('msgInput').focus();
+    }
+  }
+
+  function handleInputKey(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  }
+
+  async function clearRoom() {
+    if (!state.currentRoom) return;
+    if (!confirm('Clear all messages in this room?')) return;
+    await api.del(`/rooms/${state.currentRoom}/messages`);
+    state.messages = [];
+    renderMessages();
+  }
+
+  async function deleteRoom() {
+    if (!state.currentRoom) return;
+    if (!confirm('Delete this room and all messages?')) return;
+    await api.del(`/rooms/${state.currentRoom}`);
+  }
+
+  // ─── Search ─────────────────────────────────────────────────────────────
+  function toggleSearch() {
+    const container = document.getElementById('searchContainer');
+    container.classList.toggle('visible');
+    if (container.classList.contains('visible')) {
+      document.getElementById('searchInput').focus();
+    } else {
+      document.getElementById('searchInput').value = '';
+      renderMessages();
+    }
+  }
+
+  let searchTimeout = null;
+  async function handleSearch(query) {
+    clearTimeout(searchTimeout);
+    if (!query.trim()) {
+      renderMessages();
+      return;
+    }
+    searchTimeout = setTimeout(async () => {
+      const data = await api.get(`/search?q=${encodeURIComponent(query)}&room_id=${state.currentRoom}`);
+      state.messages = data.results;
+      renderMessages(query);
+    }, 300);
+  }
+
+  // ─── Modals ─────────────────────────────────────────────────────────────
+  function showModal(type) {
+    closeModals();
+    if (type === 'agent') {
+      document.getElementById('agentModal').classList.add('visible');
+      document.getElementById('agentIdInput').focus();
+    } else if (type === 'room') {
+      // Populate agent checkboxes
+      const container = document.getElementById('roomAgentCheckboxes');
+      container.innerHTML = state.agents.length === 0
+        ? '<span style="font-size:12px;color:var(--text-muted)">Create agents first</span>'
+        : state.agents.map(a => `
+            <label style="display:flex;align-items:center;gap:10px;padding:8px;border-radius:8px;cursor:pointer;transition:background 0.2s" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='transparent'">
+              <input type="checkbox" value="${a.id}" checked style="width:18px;height:18px">
+              ${a.avatar_url 
+                ? `<img src="${a.avatar_url}" style="width:32px;height:32px;border-radius:50%;object-fit:cover;border:2px solid ${a.color||'var(--border)'}">`
+                : `<div style="width:32px;height:32px;border-radius:50%;background:${a.color||'#6366f1'};display:flex;align-items:center;justify-content:center;font-size:16px">${a.avatar_emoji}</div>`
+              }
+              <span style="font-weight:500">${esc(a.name)}</span>
+            </label>`).join('');
+      document.getElementById('roomModal').classList.add('visible');
+      document.getElementById('roomNameInput').focus();
+    }
+  }
+
+  function closeModals() {
+    document.querySelectorAll('.modal-overlay').forEach(m => m.classList.remove('visible'));
+  }
+
+  async function createAgent() {
+    const id = document.getElementById('agentIdInput').value.trim();
+    const name = document.getElementById('agentNameInput').value.trim();
+    const emoji = document.getElementById('agentEmojiInput').value.trim();
+    const color = document.getElementById('agentColorInput').value.trim();
+    if (!id || !name) return alert('ID and Name are required');
+
+    await api.post('/agents', { id, name, avatar_emoji: emoji, color });
+    closeModals();
+    // Clear inputs
+    document.getElementById('agentIdInput').value = '';
+    document.getElementById('agentNameInput').value = '';
+    document.getElementById('agentEmojiInput').value = '🤖';
+    document.getElementById('agentColorInput').value = '#7c6bf0';
+  }
+
+  function showEditAgent(agentId) {
+    const agent = state.agents.find(a => a.id === agentId);
+    if (!agent) return;
+    closeModals();
+    document.getElementById('editAgentId').value = agent.id;
+    document.getElementById('editAgentIdDisplay').value = agent.id;
+    document.getElementById('editAgentNameInput').value = agent.name;
+    document.getElementById('editAgentEmojiInput').value = agent.avatar_emoji;
+    document.getElementById('editAgentColorInput').value = agent.color || '#7c6bf0';
+    document.getElementById('editAgentAvatarInput').value = '';
+    
+    // Show current avatar
+    const preview = document.getElementById('avatarPreview');
+    const previewImg = document.getElementById('avatarPreviewImg');
+    if (agent.avatar_url) {
+      previewImg.src = agent.avatar_url;
+      preview.style.display = 'block';
+    } else {
+      preview.style.display = 'none';
+    }
+    
+    document.getElementById('editAgentModal').classList.add('visible');
+    document.getElementById('editAgentNameInput').focus();
+  }
+
+  function previewAvatar() {
+    const fileInput = document.getElementById('editAgentAvatarInput');
+    const file = fileInput.files[0];
+    const preview = document.getElementById('avatarPreview');
+    const previewImg = document.getElementById('avatarPreviewImg');
+    
+    if (!file) {
+      preview.style.display = 'none';
+      return;
+    }
+    
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      previewImg.src = e.target.result;
+      preview.style.display = 'block';
+    };
+    reader.readAsDataURL(file);
+  }
+
+  async function uploadAvatar() {
+    const fileInput = document.getElementById('editAgentAvatarInput');
+    const file = fileInput.files[0];
+    if (!file) return;
+    
+    const agentId = document.getElementById('editAgentId').value;
+    const formData = new FormData();
+    formData.append('avatar', file);
+    
+    try {
+      const response = await fetch(`/api/agents/${agentId}/avatar`, {
+        method: 'POST',
+        body: formData
+      });
+      
+      if (!response.ok) {
+        const err = await response.json();
+        alert('Upload failed: ' + err.error);
+        return;
+      }
+      
+      const updated = await response.json();
+      // Update local state
+      const idx = state.agents.findIndex(a => a.id === agentId);
+      if (idx !== -1) state.agents[idx] = updated;
+      renderSidebar();
+      renderMessages();
+      // Hide preview after upload
+      document.getElementById('avatarPreview').style.display = 'none';
+      document.getElementById('editAgentAvatarInput').value = '';
+    } catch (e) {
+      alert('Upload failed: ' + e.message);
+    }
+  }
+
+  async function saveEditAgent() {
+    const id = document.getElementById('editAgentId').value;
+    const name = document.getElementById('editAgentNameInput').value.trim();
+    const emoji = document.getElementById('editAgentEmojiInput').value.trim();
+    const color = document.getElementById('editAgentColorInput').value.trim();
+    if (!name) return alert('Name is required');
+
+    const updated = await api.patch(`/agents/${id}`, { name, avatar_emoji: emoji, color });
+    // Update local state
+    const idx = state.agents.findIndex(a => a.id === id);
+    if (idx !== -1) state.agents[idx] = updated;
+    renderSidebar();
+    updateSendAsSelect();
+    closeModals();
+  }
+
+  async function createRoom() {
+    const name = document.getElementById('roomNameInput').value.trim();
+    const desc = document.getElementById('roomDescInput').value.trim();
+    const mode = document.getElementById('roomTurnMode').value;
+    const checks = document.querySelectorAll('#roomAgentCheckboxes input:checked');
+    const agentIds = Array.from(checks).map(c => c.value);
+
+    if (!name) return alert('Room name is required');
+
+    const room = await api.post('/rooms', {
+      name, description: desc, turn_mode: mode, agent_ids: agentIds
+    });
+    closeModals();
+    document.getElementById('roomNameInput').value = '';
+    document.getElementById('roomDescInput').value = '';
+    selectRoom(room.id);
+  }
+
+  // ─── Edit Room ──────────────────────────────────────────────────────────
+  function showEditRoom(roomId) {
+    const room = state.rooms.find(r => r.id === roomId);
+    if (!room) return;
+    closeModals();
+    document.getElementById('editRoomId').value = room.id;
+    document.getElementById('editRoomNameInput').value = room.name;
+    document.getElementById('editRoomDescInput').value = room.description || '';
+    document.getElementById('editRoomTurnMode').value = room.turn_mode || 'round_robin';
+    document.getElementById('editRoomModal').classList.add('visible');
+  }
+
+  async function saveEditRoom() {
+    const id = document.getElementById('editRoomId').value;
+    const name = document.getElementById('editRoomNameInput').value.trim();
+    const description = document.getElementById('editRoomDescInput').value.trim();
+    const turn_mode = document.getElementById('editRoomTurnMode').value;
+
+    if (!name) return alert('Room name is required');
+
+    const updated = await api.patch(`/rooms/${id}`, { name, description, turn_mode });
+    
+    // Update local state
+    const idx = state.rooms.findIndex(r => r.id === id);
+    if (idx !== -1) state.rooms[idx] = updated;
+    
+    renderSidebar();
+    closeModals();
+    
+    // Refresh current room if it's the one being edited
+    if (state.currentRoom === id) {
+      const room = await api.get(`/rooms/${id}`);
+      state.currentRoom = room.id;
+      renderMainView();
+    }
+  }
+
+  // ─── Utilities ──────────────────────────────────────────────────────────
+  function esc(str) {
+    if (!str) return '';
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function escRegex(str) {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  function formatTime(ts) {
+    if (!ts) return '';
+    const d = new Date(ts + 'Z');
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+
+  function scrollToBottom() {
+    const area = document.getElementById('messagesArea');
+    requestAnimationFrame(() => { area.scrollTop = area.scrollHeight; });
+  }
+
+  // Click outside modal to close
+  document.querySelectorAll('.modal-overlay').forEach(overlay => {
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) closeModals();
+    });
+  });
+
+  // ─── Theme ────────────────────────────────────────────────────────────────
+  function toggleTheme() {
+    const html = document.documentElement;
+    const current = html.getAttribute('data-theme');
+    const next = current === 'dark' ? 'light' : 'dark';
+    html.setAttribute('data-theme', next);
+    localStorage.setItem('agent-chat-theme', next);
+    updateThemeIcon(next);
+  }
+
+  function updateThemeIcon(theme) {
+    const btn = document.getElementById('themeToggle');
+    btn.textContent = theme === 'dark' ? '🌙' : '☀️';
+  }
+
+  function initTheme() {
+    const saved = localStorage.getItem('agent-chat-theme') || 'light';
+    document.documentElement.setAttribute('data-theme', saved);
+    updateThemeIcon(saved);
+  }
+
+  // ─── Init ───────────────────────────────────────────────────────────────
+  initTheme();
+  connectWS();
+</script>
+
+</body>
+</html>

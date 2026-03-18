@@ -1,0 +1,17 @@
+{
+  "name": "agent-chat-platform",
+  "version": "1.0.0",
+  "description": "Lightweight self-hosted chat platform for AI agent-to-agent conversations",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^9.4.3",
+    "express": "^4.18.2",
+    "multer": "^2.1.1",
+    "uuid": "^9.0.0",
+    "ws": "^8.16.0"
+  }
+}

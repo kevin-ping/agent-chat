@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Database
+chat.db
+chat.db-shm
+chat.db-wal
+
+# macOS
+.DS_Store
+*.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment
+.env
+.env.local
+
+# Build output
+public/build/
+dist/
+
+# Avatar images (keep folder, not files)
+public/avatars/*
+!public/avatars/.gitkeep

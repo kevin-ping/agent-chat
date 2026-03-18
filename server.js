@@ -1,0 +1,604 @@
+const express = require('express');
+const http = require('http');
+const { WebSocketServer } = require('ws');
+const Database = require('better-sqlite3');
+const { v4: uuidv4 } = require('uuid');
+const path = require('path');
+const multer = require('multer');
+const fs = require('fs');
+
+// ─── Config ─────────────────────────────────────────────────────────────────
+const PORT = process.env.PORT || 3210;
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'chat.db');
+
+// ─── Database Setup ─────────────────────────────────────────────────────────
+const db = new Database(DB_PATH);
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS rooms (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    turn_mode TEXT DEFAULT 'free',  -- 'free' | 'strict' | 'round_robin'
+    current_turn TEXT DEFAULT NULL,  -- agent_id whose turn it is
+    turn_order TEXT DEFAULT '[]',    -- JSON array of agent_ids for round_robin
+    created_at DATETIME DEFAULT (datetime('now')),
+    updated_at DATETIME DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS agents (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    avatar_emoji TEXT DEFAULT '🤖',
+    color TEXT DEFAULT '#6366f1',
+    created_at DATETIME DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS messages (
+    id TEXT PRIMARY KEY,
+    room_id TEXT NOT NULL,
+    agent_id TEXT,               -- NULL for system messages
+    content TEXT NOT NULL,
+    sequence INTEGER NOT NULL,   -- global sequence within room for ordering
+    msg_type TEXT DEFAULT 'message',  -- 'message' | 'system' | 'error'
+    metadata TEXT DEFAULT '{}',  -- JSON blob for extra data
+    created_at DATETIME DEFAULT (datetime('now')),
+    FOREIGN KEY (room_id) REFERENCES rooms(id),
+    FOREIGN KEY (agent_id) REFERENCES agents(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_messages_room_seq ON messages(room_id, sequence);
+  CREATE INDEX IF NOT EXISTS idx_messages_room_time ON messages(room_id, created_at);
+
+  CREATE TABLE IF NOT EXISTS room_agents (
+    room_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    joined_at DATETIME DEFAULT (datetime('now')),
+    PRIMARY KEY (room_id, agent_id),
+    FOREIGN KEY (room_id) REFERENCES rooms(id),
+    FOREIGN KEY (agent_id) REFERENCES agents(id)
+  );
+`);
+
+// ─── Prepared Statements ────────────────────────────────────────────────────
+const stmts = {
+  // Rooms
+  createRoom: db.prepare(`INSERT INTO rooms (id, name, description, turn_mode, turn_order) VALUES (?, ?, ?, ?, ?)`),
+  getRoom: db.prepare(`SELECT * FROM rooms WHERE id = ?`),
+  listRooms: db.prepare(`SELECT r.*, COUNT(m.id) as message_count FROM rooms r LEFT JOIN messages m ON m.room_id = r.id GROUP BY r.id ORDER BY r.updated_at DESC`),
+  updateRoomTurn: db.prepare(`UPDATE rooms SET current_turn = ?, updated_at = datetime('now') WHERE id = ?`),
+  updateRoom: db.prepare(`UPDATE rooms SET name = COALESCE(?, name), description = COALESCE(?, description), turn_mode = COALESCE(?, turn_mode), turn_order = COALESCE(?, turn_order), updated_at = datetime('now') WHERE id = ?`),
+  deleteRoom: db.prepare(`DELETE FROM rooms WHERE id = ?`),
+
+  // Agents
+  createAgent: db.prepare(`INSERT INTO agents (id, name, avatar_emoji, color, avatar_url) VALUES (?, ?, ?, ?, ?)`),
+  getAgent: db.prepare(`SELECT * FROM agents WHERE id = ?`),
+  listAgents: db.prepare(`SELECT * FROM agents ORDER BY name`),
+  updateAgent: db.prepare(`UPDATE agents SET name = COALESCE(?, name), avatar_emoji = COALESCE(?, avatar_emoji), color = COALESCE(?, color), avatar_url = COALESCE(?, avatar_url) WHERE id = ?`),
+  updateAgentAvatar: db.prepare(`UPDATE agents SET avatar_url = ? WHERE id = ?`),
+
+  // Messages
+  insertMessage: db.prepare(`INSERT INTO messages (id, room_id, agent_id, content, sequence, msg_type, metadata) VALUES (?, ?, ?, ?, ?, ?, ?)`),
+  getMessages: db.prepare(`SELECT m.*, a.name as agent_name, a.avatar_emoji, a.avatar_url, a.color FROM messages m LEFT JOIN agents a ON m.agent_id = a.id WHERE m.room_id = ? ORDER BY m.sequence ASC`),
+  getMessagesPaginated: db.prepare(`SELECT m.*, a.name as agent_name, a.avatar_emoji, a.avatar_url, a.color FROM messages m LEFT JOIN agents a ON m.agent_id = a.id WHERE m.room_id = ? ORDER BY m.sequence ASC LIMIT ? OFFSET ?`),
+  getMessagesAfterSeq: db.prepare(`SELECT m.*, a.name as agent_name, a.avatar_emoji, a.avatar_url, a.color FROM messages m LEFT JOIN agents a ON m.agent_id = a.id WHERE m.room_id = ? AND m.sequence > ? ORDER BY m.sequence ASC`),
+  getMaxSequence: db.prepare(`SELECT COALESCE(MAX(sequence), 0) as max_seq FROM messages WHERE room_id = ?`),
+  searchMessages: db.prepare(`SELECT m.*, a.name as agent_name, a.avatar_emoji, a.color FROM messages m LEFT JOIN agents a ON m.agent_id = a.id WHERE m.room_id = ? AND m.content LIKE ? ORDER BY m.sequence ASC LIMIT 50`),
+  searchAllMessages: db.prepare(`SELECT m.*, a.name as agent_name, a.avatar_emoji, a.color, r.name as room_name FROM messages m LEFT JOIN agents a ON m.agent_id = a.id LEFT JOIN rooms r ON m.room_id = r.id WHERE m.content LIKE ? ORDER BY m.created_at DESC LIMIT 50`),
+  deleteRoomMessages: db.prepare(`DELETE FROM messages WHERE room_id = ?`),
+
+  // Room agents
+  addAgentToRoom: db.prepare(`INSERT OR IGNORE INTO room_agents (room_id, agent_id) VALUES (?, ?)`),
+  getRoomAgents: db.prepare(`SELECT a.* FROM agents a INNER JOIN room_agents ra ON a.id = ra.agent_id WHERE ra.room_id = ?`),
+  removeAgentFromRoom: db.prepare(`DELETE FROM room_agents WHERE room_id = ? AND agent_id = ?`),
+};
+
+// ─── Turn-Taking Logic ──────────────────────────────────────────────────────
+function validateTurn(room, agentId) {
+  if (room.turn_mode === 'free') return { ok: true };
+
+  if (room.turn_mode === 'strict') {
+    if (room.current_turn && room.current_turn !== agentId) {
+      return { ok: false, error: `Not your turn. Current turn: ${room.current_turn}` };
+    }
+    return { ok: true };
+  }
+
+  if (room.turn_mode === 'round_robin') {
+    const order = JSON.parse(room.turn_order || '[]');
+    if (order.length === 0) return { ok: true };
+    if (room.current_turn && room.current_turn !== agentId) {
+      return { ok: false, error: `Not your turn. Current turn: ${room.current_turn}` };
+    }
+    return { ok: true };
+  }
+
+  return { ok: true };
+}
+
+function advanceTurn(room, currentAgentId) {
+  if (room.turn_mode === 'free') return;
+
+  const order = JSON.parse(room.turn_order || '[]');
+  if (order.length < 2) return;
+
+  const currentIdx = order.indexOf(currentAgentId);
+  const nextIdx = (currentIdx + 1) % order.length;
+  const nextAgent = order[nextIdx];
+
+  stmts.updateRoomTurn.run(nextAgent, room.id);
+}
+
+// ─── Express App ────────────────────────────────────────────────────────────
+const app = express();
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
+
+// CORS for local dev
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, X-Agent-Id');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH');
+  next();
+});
+
+// ─── Multer Config for Avatar Upload ────────────────────────────────────────
+const avatarsDir = path.join(__dirname, 'public', 'avatars');
+if (!fs.existsSync(avatarsDir)) {
+  fs.mkdirSync(avatarsDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, avatarsDir),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    cb(null, `${req.params.id}${ext}`);
+  }
+});
+const upload = multer({ storage, limits: { fileSize: 2 * 1024 * 1024 } });
+
+// ─── API Routes: Agents ─────────────────────────────────────────────────────
+app.post('/api/agents', (req, res) => {
+  const { name, avatar_emoji, color, avatar_url } = req.body;
+  if (!name) return res.status(400).json({ error: 'name is required' });
+  const id = req.body.id || uuidv4();
+  try {
+    stmts.createAgent.run(id, name, avatar_emoji || '🤖', color || '#6366f1', avatar_url || '');
+    const agent = stmts.getAgent.get(id);
+    broadcast({ type: 'agent_created', agent });
+    res.status(201).json(agent);
+  } catch (e) {
+    if (e.message.includes('UNIQUE')) {
+      return res.status(409).json({ error: 'Agent ID already exists' });
+    }
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/agents', (req, res) => {
+  res.json(stmts.listAgents.all());
+});
+
+app.get('/api/agents/:id', (req, res) => {
+  const agent = stmts.getAgent.get(req.params.id);
+  if (!agent) return res.status(404).json({ error: 'Agent not found' });
+  res.json(agent);
+});
+
+app.patch('/api/agents/:id', (req, res) => {
+  const { name, avatar_emoji, color, avatar_url } = req.body;
+  stmts.updateAgent.run(name || null, avatar_emoji || null, color || null, avatar_url || null, req.params.id);
+  const agent = stmts.getAgent.get(req.params.id);
+  if (!agent) return res.status(404).json({ error: 'Agent not found' });
+  res.json(agent);
+});
+
+// Upload avatar image
+app.post('/api/agents/:id/avatar', upload.single('avatar'), (req, res) => {
+  const agentId = req.params.id;
+  const agent = stmts.getAgent.get(agentId);
+  if (!agent) return res.status(404).json({ error: 'Agent not found' });
+  
+  if (!req.file) {
+    return res.status(400).json({ error: 'No file uploaded' });
+  }
+  
+  const avatarUrl = `/avatars/${req.file.filename}`;
+  stmts.updateAgentAvatar.run(avatarUrl, agentId);
+  
+  const updatedAgent = stmts.getAgent.get(agentId);
+  broadcast({ type: 'agent_updated', agent: updatedAgent });
+  res.json(updatedAgent);
+});
+
+// ─── API Routes: Rooms ──────────────────────────────────────────────────────
+app.post('/api/rooms', (req, res) => {
+  const { name, description, turn_mode, agent_ids } = req.body;
+  if (!name) return res.status(400).json({ error: 'name is required' });
+  const id = req.body.id || uuidv4();
+  const mode = turn_mode || 'round_robin';
+  const turnOrder = agent_ids || [];
+
+  const create = db.transaction(() => {
+    stmts.createRoom.run(id, name, description || '', mode, JSON.stringify(turnOrder));
+    for (const agentId of turnOrder) {
+      stmts.addAgentToRoom.run(id, agentId);
+    }
+    if (turnOrder.length > 0 && mode !== 'free') {
+      stmts.updateRoomTurn.run(turnOrder[0], id);
+    }
+  });
+
+  try {
+    create();
+    const room = stmts.getRoom.get(id);
+    broadcast({ type: 'room_created', room });
+    res.status(201).json(room);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/rooms', (req, res) => {
+  const rooms = stmts.listRooms.all();
+  res.json(rooms);
+});
+
+app.get('/api/rooms/:id', (req, res) => {
+  const room = stmts.getRoom.get(req.params.id);
+  if (!room) return res.status(404).json({ error: 'Room not found' });
+  const agents = stmts.getRoomAgents.all(req.params.id);
+  res.json({ ...room, agents });
+});
+
+app.patch('/api/rooms/:id', (req, res) => {
+  const { name, description, turn_mode, turn_order } = req.body;
+  stmts.updateRoom.run(
+    name || null, description || null, turn_mode || null,
+    turn_order ? JSON.stringify(turn_order) : null, req.params.id
+  );
+  const room = stmts.getRoom.get(req.params.id);
+  if (!room) return res.status(404).json({ error: 'Room not found' });
+  broadcast({ type: 'room_updated', room });
+  res.json(room);
+});
+
+app.delete('/api/rooms/:id', (req, res) => {
+  stmts.deleteRoomMessages.run(req.params.id);
+  stmts.deleteRoom.run(req.params.id);
+  broadcast({ type: 'room_deleted', room_id: req.params.id });
+  res.json({ ok: true });
+});
+
+// ─── API Routes: Messages ───────────────────────────────────────────────────
+app.post('/api/rooms/:roomId/messages', (req, res) => {
+  const { roomId } = req.params;
+  const { agent_id, content, msg_type, metadata } = req.body;
+
+  if (!content) return res.status(400).json({ error: 'content is required' });
+
+  const room = stmts.getRoom.get(roomId);
+  if (!room) return res.status(404).json({ error: 'Room not found' });
+
+  // Validate agent exists if provided
+  if (agent_id) {
+    const agent = stmts.getAgent.get(agent_id);
+    if (!agent) return res.status(404).json({ error: 'Agent not found' });
+  }
+
+  // Turn validation
+  if (agent_id) {
+    const turnCheck = validateTurn(room, agent_id);
+    if (!turnCheck.ok) {
+      return res.status(403).json({
+        error: turnCheck.error,
+        current_turn: room.current_turn,
+        hint: 'Wait for your turn or change room turn_mode to "free"'
+      });
+    }
+  }
+
+  const sendMessage = db.transaction(() => {
+    const { max_seq } = stmts.getMaxSequence.get(roomId);
+    const seq = max_seq + 1;
+    const id = uuidv4();
+
+    stmts.insertMessage.run(
+      id, roomId, agent_id || null, content, seq,
+      msg_type || 'message', JSON.stringify(metadata || {})
+    );
+
+    // Advance turn
+    if (agent_id) advanceTurn(room, agent_id);
+
+    // Get the full message with agent info
+    const messages = stmts.getMessagesAfterSeq.all(roomId, seq - 1);
+    return messages[0];
+  });
+
+  try {
+    const message = sendMessage();
+    // Get updated room for turn info
+    const updatedRoom = stmts.getRoom.get(roomId);
+    broadcast({
+      type: 'new_message',
+      room_id: roomId,
+      message,
+      current_turn: updatedRoom.current_turn
+    });
+    res.status(201).json({
+      ...message,
+      current_turn: updatedRoom.current_turn
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/rooms/:roomId/messages', (req, res) => {
+  const { roomId } = req.params;
+  const { limit, offset, after_sequence } = req.query;
+
+  const room = stmts.getRoom.get(roomId);
+  if (!room) return res.status(404).json({ error: 'Room not found' });
+
+  let messages;
+  if (after_sequence) {
+    messages = stmts.getMessagesAfterSeq.all(roomId, parseInt(after_sequence));
+  } else if (limit) {
+    messages = stmts.getMessagesPaginated.all(roomId, parseInt(limit), parseInt(offset || 0));
+  } else {
+    messages = stmts.getMessages.all(roomId);
+  }
+
+  res.json({
+    messages,
+    room: {
+      id: room.id,
+      name: room.name,
+      current_turn: room.current_turn,
+      turn_mode: room.turn_mode
+    }
+  });
+});
+
+// ─── API Routes: Search ─────────────────────────────────────────────────────
+app.get('/api/search', (req, res) => {
+  const { q, room_id } = req.query;
+  if (!q) return res.status(400).json({ error: 'q (query) is required' });
+  const pattern = `%${q}%`;
+
+  let messages;
+  if (room_id) {
+    messages = stmts.searchMessages.all(room_id, pattern);
+  } else {
+    messages = stmts.searchAllMessages.all(pattern);
+  }
+  res.json({ query: q, results: messages });
+});
+
+// ─── API Routes: Context (for agents to get conversation context) ───────────
+app.get('/api/rooms/:roomId/context', (req, res) => {
+  const { roomId } = req.params;
+  const { last_n } = req.query;
+
+  const room = stmts.getRoom.get(roomId);
+  if (!room) return res.status(404).json({ error: 'Room not found' });
+
+  const allMessages = stmts.getMessages.all(roomId);
+  const messages = last_n ? allMessages.slice(-parseInt(last_n)) : allMessages;
+
+  // Format as a conversation transcript for agent consumption
+  const transcript = messages.map(m => ({
+    role: m.agent_name || 'system',
+    content: m.content,
+    sequence: m.sequence,
+    timestamp: m.created_at
+  }));
+
+  res.json({
+    room: { id: room.id, name: room.name, current_turn: room.current_turn, turn_mode: room.turn_mode },
+    agents: stmts.getRoomAgents.all(roomId),
+    total_messages: allMessages.length,
+    transcript
+  });
+});
+
+// ─── API: Room turn management ──────────────────────────────────────────────
+app.post('/api/rooms/:roomId/set-turn', (req, res) => {
+  const { agent_id } = req.body;
+  const room = stmts.getRoom.get(req.params.roomId);
+  if (!room) return res.status(404).json({ error: 'Room not found' });
+
+  stmts.updateRoomTurn.run(agent_id, req.params.roomId);
+  broadcast({ type: 'turn_changed', room_id: req.params.roomId, current_turn: agent_id });
+  res.json({ ok: true, current_turn: agent_id });
+});
+
+// ─── API: Clear room messages ───────────────────────────────────────────────
+app.delete('/api/rooms/:roomId/messages', (req, res) => {
+  stmts.deleteRoomMessages.run(req.params.roomId);
+  const order = JSON.parse(stmts.getRoom.get(req.params.roomId)?.turn_order || '[]');
+  if (order.length > 0) stmts.updateRoomTurn.run(order[0], req.params.roomId);
+  broadcast({ type: 'messages_cleared', room_id: req.params.roomId });
+  res.json({ ok: true });
+});
+
+// ─── Agent Webhooks (notify agents when it's their turn) ────────────────────
+const agentWebhooks = new Map(); // agent_id -> callback URL
+
+app.post('/api/agents/:id/webhook', (req, res) => {
+  const { callback_url } = req.body;
+  if (!callback_url) return res.status(400).json({ error: 'callback_url is required' });
+  const agent = stmts.getAgent.get(req.params.id);
+  if (!agent) return res.status(404).json({ error: 'Agent not found' });
+  agentWebhooks.set(req.params.id, callback_url);
+  res.json({ ok: true, agent_id: req.params.id, callback_url });
+});
+
+app.delete('/api/agents/:id/webhook', (req, res) => {
+  agentWebhooks.delete(req.params.id);
+  res.json({ ok: true });
+});
+
+app.get('/api/webhooks', (req, res) => {
+  const hooks = {};
+  for (const [id, url] of agentWebhooks) hooks[id] = url;
+  res.json(hooks);
+});
+
+async function notifyAgent(agentId, payload) {
+  const url = agentWebhooks.get(agentId);
+  if (!url) return;
+  try {
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(5000)
+    });
+  } catch (e) {
+    console.log(`[webhook] Failed to notify ${agentId} at ${url}: ${e.message}`);
+  }
+}
+
+// ─── Long Polling (agent waits for their turn) ─────────────────────────────
+const waitingClients = new Map(); // agent_id -> [{ res, timer }]
+
+app.get('/api/rooms/:roomId/wait-turn/:agentId', (req, res) => {
+  const { roomId, agentId } = req.params;
+  const timeout = parseInt(req.query.timeout) || 30;
+
+  const room = stmts.getRoom.get(roomId);
+  if (!room) return res.status(404).json({ error: 'Room not found' });
+
+  // If it's already this agent's turn, respond immediately
+  if (room.current_turn === agentId || room.turn_mode === 'free') {
+    const context = stmts.getMessages.all(roomId);
+    return res.json({
+      your_turn: true,
+      room_id: roomId,
+      current_turn: room.current_turn,
+      last_message: context.length > 0 ? context[context.length - 1] : null,
+      total_messages: context.length
+    });
+  }
+
+  // Otherwise, hold the connection open until it's their turn
+  const timer = setTimeout(() => {
+    removeWaiter(agentId, res);
+    res.json({ your_turn: false, room_id: roomId, current_turn: room.current_turn, timeout: true });
+  }, timeout * 1000);
+
+  const key = `${roomId}:${agentId}`;
+  if (!waitingClients.has(key)) waitingClients.set(key, []);
+  waitingClients.get(key).push({ res, timer });
+
+  req.on('close', () => removeWaiter(agentId, res));
+});
+
+function removeWaiter(key, res) {
+  const waiters = waitingClients.get(key);
+  if (!waiters) return;
+  const idx = waiters.findIndex(w => w.res === res);
+  if (idx !== -1) {
+    clearTimeout(waiters[idx].timer);
+    waiters.splice(idx, 1);
+  }
+  if (waiters.length === 0) waitingClients.delete(key);
+}
+
+function notifyWaiters(roomId, currentTurn) {
+  const key = `${roomId}:${currentTurn}`;
+  const waiters = waitingClients.get(key);
+  if (!waiters || waiters.length === 0) return;
+
+  const context = stmts.getMessages.all(roomId);
+  const payload = {
+    your_turn: true,
+    room_id: roomId,
+    current_turn: currentTurn,
+    last_message: context.length > 0 ? context[context.length - 1] : null,
+    total_messages: context.length
+  };
+
+  for (const { res, timer } of waiters) {
+    clearTimeout(timer);
+    try { res.json(payload); } catch (e) {}
+  }
+  waitingClients.delete(key);
+}
+
+// ─── WebSocket ──────────────────────────────────────────────────────────────
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server, path: '/ws' });
+
+const clients = new Set();
+
+function broadcast(data) {
+  const msg = JSON.stringify(data);
+  for (const ws of clients) {
+    if (ws.readyState === 1) ws.send(msg);
+  }
+
+  // Also notify via webhook + long-poll if a turn changed
+  if (data.current_turn) {
+    notifyAgent(data.current_turn, data);
+    notifyWaiters(data.room_id, data.current_turn);
+  }
+}
+
+wss.on('connection', (ws) => {
+  clients.add(ws);
+  ws.on('close', () => clients.delete(ws));
+  ws.on('error', () => clients.delete(ws));
+
+  // Send initial state
+  ws.send(JSON.stringify({
+    type: 'connected',
+    rooms: stmts.listRooms.all(),
+    agents: stmts.listAgents.all()
+  }));
+});
+
+// ─── Serve Frontend ─────────────────────────────────────────────────────────
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// ─── Start ──────────────────────────────────────────────────────────────────
+const os = require('os');
+
+function getLanIP() {
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        return iface.address;
+      }
+    }
+  }
+  return 'unknown';
+}
+
+server.listen(PORT, '0.0.0.0', () => {
+  const lanIP = getLanIP();
+  console.log(`
+┌──────────────────────────────────────────────────┐
+│  Agent Chat Platform                             │
+│  ──────────────────────────────────────────────  │
+│                                                  │
+│  Local:     http://localhost:${PORT}                │
+│  LAN:       http://${lanIP}:${PORT}    │
+│                                                  │
+│  API:       http://${lanIP}:${PORT}/api │
+│  WebSocket: ws://${lanIP}:${PORT}/ws    │
+│  Database:  ${DB_PATH}                            │
+│                                                  │
+│  ➜ Open the LAN URL from any device on           │
+│    the same Wi-Fi network                        │
+└──────────────────────────────────────────────────┘
+  `);
+});
