@@ -33,6 +33,7 @@ db.exec(`
     name TEXT NOT NULL,
     avatar_emoji TEXT DEFAULT '🤖',
     color TEXT DEFAULT '#6366f1',
+    avatar_url TEXT DEFAULT '',
     created_at DATETIME DEFAULT (datetime('now'))
   );
 
@@ -61,6 +62,27 @@ db.exec(`
     FOREIGN KEY (agent_id) REFERENCES agents(id)
   );
 `);
+
+// ─── Database Migrations ─────────────────────────────────────────────────────
+// Auto-add missing columns for backward compatibility
+function runMigrations() {
+  const migrations = [
+    { table: 'agents', column: 'avatar_url', type: 'TEXT DEFAULT ""' },
+    // Add more migrations here as needed
+  ];
+
+  for (const mig of migrations) {
+    try {
+      const result = db.prepare(`SELECT ${mig.column} FROM ${mig.table} LIMIT 1`).get();
+    } catch (e) {
+      if (e.message.includes('no such column')) {
+        console.log(`[Migration] Adding column ${mig.column} to ${mig.table}...`);
+        db.exec(`ALTER TABLE ${mig.table} ADD COLUMN ${mig.column} ${mig.type}`);
+      }
+    }
+  }
+}
+runMigrations();
 
 // ─── Prepared Statements ────────────────────────────────────────────────────
 const stmts = {
