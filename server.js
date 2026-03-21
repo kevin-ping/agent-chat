@@ -140,6 +140,16 @@ const stmts = {
   deleteMessage: db.prepare(`DELETE FROM messages WHERE id = ?`),
   getMessageById: db.prepare(`SELECT * FROM messages WHERE id = ?`),
 
+  // Discussion Management
+  getAgentRoom: db.prepare(`SELECT * FROM agents_rooms WHERE agent_id = ? AND room_id = ?`),
+  setAgentNoComments: db.prepare(`INSERT OR REPLACE INTO agents_rooms (agent_id, room_id, no_comments) VALUES (?, ?, ?)`),
+  getAllAgentsInRoom: db.prepare(`SELECT ar.agent_id, ar.room_id, ar.no_comments FROM agents_rooms ar INNER JOIN agents a ON ar.agent_id = a.id WHERE ar.room_id = ?`),
+  resetAllAgentsInRoom: db.prepare(`UPDATE agents_rooms SET no_comments = 0 WHERE room_id = ?`),
+  getRoomDiscussion: db.prepare(`SELECT * FROM rooms WHERE id = ?`),
+  setRoomDiscussion: db.prepare(`UPDATE rooms SET discussion = ?, moderator_id = ?, discussion_timeout = ?, last_activity_at = ? WHERE id = ?`),
+  stopRoomDiscussion: db.prepare(`UPDATE rooms SET discussion = 0, moderator_id = NULL WHERE id = ?`),
+  updateRoomActivity: db.prepare(`UPDATE rooms SET last_activity_at = datetime('now') WHERE id = ?`),
+
   // Room agents
   addAgentToRoom: db.prepare(`INSERT OR IGNORE INTO room_agents (room_id, agent_id) VALUES (?, ?)`),
   getRoomAgents: db.prepare(`SELECT a.* FROM agents a INNER JOIN room_agents ra ON a.id = ra.agent_id WHERE ra.room_id = ?`),
@@ -306,7 +316,15 @@ app.get('/api/rooms/:id', (req, res) => {
   const room = stmts.getRoom.get(req.params.id);
   if (!room) return res.status(404).json({ error: 'Room not found' });
   const agents = stmts.getRoomAgents.all(req.params.id);
-  res.json({ ...room, agents });
+  // 获取每个 agent 的 no_comments 状态
+  const agentsWithStatus = agents.map(a => {
+    const agentRoom = stmts.getAgentRoom.get(a.id, req.params.id);
+    return {
+      ...a,
+      no_comments: agentRoom ? agentRoom.no_comments : 0
+    };
+  });
+  res.json({ ...room, agents: agentsWithStatus });
 });
 
 app.patch('/api/rooms/:id', (req, res) => {
@@ -591,6 +609,174 @@ app.get('/api/webhooks', (req, res) => {
   const hooks = {};
   for (const [id, url] of agentWebhooks) hooks[id] = url;
   res.json(hooks);
+});
+
+// Agent 在线状态 API（读取 webhook-trigger 维护的状态文件）
+app.get('/api/agent-status', (req, res) => {
+  const statusFile = '/tmp/discussion-status.json';
+  try {
+    if (fs.existsSync(statusFile)) {
+      const status = JSON.parse(fs.readFileSync(statusFile, 'utf8'));
+      res.json(status);
+    } else {
+      res.json({ alalei: false, ximige: false });
+    }
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+
+
+// ─── API Routes: Discussion ──────────────────────────────────────────────────
+
+app.get('/api/rooms/:roomId/discussion-status', (req, res) => {
+  const { roomId } = req.params;
+  const room = stmts.getRoomDiscussion.get(roomId);
+  if (!room) return res.status(404).json({ error: 'Room not found' });
+
+  const agentsInRoom = stmts.getAllAgentsInRoom.all(roomId);
+  const noCommentsMap = {};
+  let agreedCount = 0;
+
+  for (const agent of agentsInRoom) {
+    const agentRoom = stmts.getAgentRoom.get(agent.agent_id, roomId);
+    const noComments = agentRoom ? agentRoom.no_comments : 0;
+    noCommentsMap[agent.agent_id] = noComments;
+    if (noComments === 1) agreedCount++;
+  }
+
+  const totalAgents = agentsInRoom.length;
+  const shouldContinue = agreedCount < totalAgents;
+
+  let timeoutRemaining = null;
+  if (room.discussion === 1) {
+    const lastActivity = new Date(room.last_activity_at);
+    const now = new Date();
+    const elapsed = (now - lastActivity) / 1000;
+    const timeout = room.discussion_timeout || 300;
+    timeoutRemaining = Math.max(0, timeout - elapsed);
+  }
+
+  res.json({
+    discussion: room.discussion === 1,
+    moderator_id: room.moderator_id,
+    no_comments: noCommentsMap,
+    shouldContinue,
+    lastActivity: room.last_activity_at,
+    timeoutRemaining
+  });
+});
+
+app.post('/api/rooms/:roomId/agents/:agentId/no-comments', (req, res) => {
+  const { roomId, agentId } = req.params;
+  const { no_comments } = req.body;
+
+  const agent = stmts.getAgent.get(agentId);
+  if (!agent) return res.status(404).json({ error: 'Agent not found' });
+
+  stmts.setAgentNoComments.run(agentId, roomId, no_comments ? 1 : 0);
+  stmts.updateRoomActivity.run(roomId);
+
+  res.json({ success: true, message: 'Agent no_comments status updated' });
+});
+
+app.post('/api/rooms/:roomId/discussion/start', (req, res) => {
+  const { roomId } = req.params;
+  const { moderator_id, timeout_seconds } = req.body;
+
+  const room = stmts.getRoom.get(roomId);
+  if (!room) return res.status(404).json({ error: 'Room not found' });
+
+  const agent = stmts.getAgent.get(moderator_id);
+  if (!agent) return res.status(404).json({ error: 'Agent not found' });
+
+  stmts.resetAllAgentsInRoom.run(roomId);
+  stmts.setRoomDiscussion.run(1, moderator_id, timeout_seconds || 300, new Date().toISOString(), roomId);
+
+  broadcast({
+    type: 'discussion_started',
+    room_id: roomId,
+    moderator_id: moderator_id
+  });
+
+  res.json({
+    success: true,
+    message: 'Discussion started',
+    roomStatus: {
+      discussion: true,
+      moderator_id: moderator_id,
+      timeout: timeout_seconds || 300
+    }
+  });
+});
+
+app.post('/api/rooms/:roomId/discussion/stop', (req, res) => {
+  const { roomId } = req.params;
+  const { reason, send_alert } = req.body;
+
+  const room = stmts.getRoom.get(roomId);
+  if (!room) return res.status(404).json({ error: 'Room not found' });
+
+  stmts.stopRoomDiscussion.run(roomId);
+
+  const result = {
+    success: true,
+    message: 'Discussion stopped: ' + reason,
+    reason: reason
+  };
+
+  if (send_alert) {
+    result.alert_sent = true;
+  }
+
+  broadcast({
+    type: 'discussion_stopped',
+    room_id: roomId,
+    reason: reason
+  });
+
+  res.json(result);
+});
+
+app.get('/api/rooms/:roomId/timeout-check', (req, res) => {
+  const { roomId } = req.params;
+  const room = stmts.getRoomDiscussion.get(roomId);
+  if (!room) return res.status(404).json({ error: 'Room not found' });
+
+  if (room.discussion !== 1) {
+    return res.json({
+      shouldReset: false,
+      reason: 'not in discussion',
+      elapsed: 0
+    });
+  }
+
+  const timeout = room.discussion_timeout || 300;
+  const lastActivity = new Date(room.last_activity_at);
+  const now = new Date();
+  const elapsed = (now - lastActivity) / 1000;
+
+  if (elapsed > timeout) {
+    stmts.resetAllAgentsInRoom.run(roomId);
+    stmts.stopRoomDiscussion.run(roomId);
+
+    res.json({
+      shouldReset: true,
+      reason: 'timeout after ' + elapsed + 's (timeout: ' + timeout + 's)',
+      elapsed: elapsed,
+      resetDetails: {
+        agentsReset: true,
+        discussionStopped: true
+      }
+    });
+  }
+
+  res.json({
+    shouldReset: false,
+    reason: 'active',
+    elapsed: elapsed
+  });
 });
 
 // ─── API: Settings ───────────────────────────────────────────────────────────

@@ -64,13 +64,38 @@
 
   /* ── Sidebar ─────────────────────────────────── */
   .sidebar {
-    width: 280px;
-    min-width: 280px;
+    width: 320px;
+    min-width: 320px;
     background: var(--bg-secondary);
     border-right: 1px solid var(--border);
     display: flex;
     flex-direction: column;
     height: 100vh;
+  }
+
+  /* ── Agents Panel (right side) ───────────────── */
+  .agents-panel {
+    width: 220px;
+    min-width: 220px;
+    background: var(--bg-secondary);
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow-y: auto;
+  }
+
+  .agents-panel-header {
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-muted);
   }
 
   .sidebar-header {
@@ -130,6 +155,62 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+  }
+
+  .discussion-status {
+    display: flex;
+    gap: 4px;
+    margin-left: 8px;
+  }
+
+  .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+    transition: all 0.3s ease;
+  }
+
+  .status-dot.on {
+    background: #22c55e;
+    box-shadow: 0 0 6px #22c55e;
+  }
+
+  .status-dot.off {
+    background: #6b7280;
+    opacity: 0.5;
+  }
+
+  .status-dot:hover {
+    cursor: pointer;
+    transform: scale(1.2);
+  }
+
+  /* Agent 旁边的小状态灯 */
+  .status-dot-small {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+    margin-right: 4px;
+    flex-shrink: 0;
+    transition: all 0.3s ease;
+  }
+
+  .status-dot-small.on {
+    background: #22c55e;
+    box-shadow: 0 0 6px #22c55e;
+  }
+
+  .status-dot-small.off {
+    background: #6b7280;
+    opacity: 0.4;
+  }
+
+  .agent-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
 
   .room-list, .agent-list {
@@ -198,6 +279,75 @@
     border-radius: 50%;
     object-fit: cover;
   }
+  
+  /* 参与者头像区域 */
+  .room-participants {
+    padding: 4px 12px;
+    border-top: 1px solid var(--border);
+    margin-top: auto;
+  }
+  .participant-avatars {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 4px 0;
+  }
+  .participant-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+  }
+  .participant-item .avatar-wrapper {
+    position: relative;
+    width: 32px;
+    height: 32px;
+  }
+  .participant-item .agent-avatar {
+    font-size: 18px;
+    width: 32px;
+    height: 32px;
+    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: var(--bg-hover);
+  }
+  .participant-item .agent-avatar-img {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    object-fit: cover;
+  }
+  .participant-item .agent-avatar.agreed {
+    opacity: 0.5;
+    filter: grayscale(100%);
+  }
+  .participant-item .status-icon {
+    position: absolute;
+    bottom: -2px;
+    right: -2px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 2px solid var(--bg);
+  }
+  .participant-item .status-icon.discussing {
+    background: #22c55e; /* 绿色 - 正在讨论 */
+  }
+  .participant-item .status-icon.agreed {
+    background: #6b7280; /* 灰色 - 已同意/结束 */
+  }
+  .participant-item .participant-name {
+    font-size: 10px;
+    color: var(--text-muted);
+    max-width: 40px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  
   .agent-item .agent-name {
     font-size: 13px;
     font-weight: 500;
@@ -666,14 +816,12 @@
     </div>
   </div>
   <div class="room-list" id="roomList"></div>
-
-  <div class="sidebar-section">
-    <div class="sidebar-section-title">
-      Agents
-      <button class="icon-btn" onclick="showModal('agent')" title="New Agent">＋</button>
-    </div>
+  
+  <!-- 当前 room 的参与者状态 -->
+  <div class="room-participants" id="roomParticipants" style="display:none">
+    <div class="sidebar-section-title" style="font-size:12px;padding:8px 12px 4px">Participants</div>
+    <div class="participant-avatars" id="participantAvatars"></div>
   </div>
-  <div class="agent-list" id="agentList"></div>
 
   <div class="api-panel">
     <details>
@@ -754,6 +902,15 @@ WS   ws://host:port/ws</code></pre>
       </div>
     </div>
   </div>
+</div>
+
+<!-- Agents Panel (right side) -->
+<div class="agents-panel">
+  <div class="agents-panel-header">
+    <span>Agents</span>
+    <button class="icon-btn" onclick="showModal('agent')" title="New Agent">＋</button>
+  </div>
+  <div class="agent-list" id="agentList"></div>
 </div>
 
 <!-- Modals -->
@@ -881,26 +1038,9 @@ WS   ws://host:port/ws</code></pre>
 <div class="modal-overlay" id="settingsModal">
   <div class="modal">
     <h3>⚙️ Settings</h3>
-    <div style="display:flex;flex-direction:column;gap:16px;margin-top:16px;">
-      <div>
-        <label style="display:block;margin-bottom:4px;font-weight:500;">Context Default Limit</label>
-        <input type="number" id="settingDefaultLimit" min="1" max="100" value="10" style="width:100%;padding:8px;border-radius:4px;border:1px solid var(--border);background:var(--bg-input);color:var(--text);">
-        <small style="color:var(--text-dim);">Default number of messages to return when /context is called without last_n parameter</small>
-      </div>
-      <div>
-        <label style="display:block;margin-bottom:4px;font-weight:500;">Context Min Limit</label>
-        <input type="number" id="settingMinLimit" min="1" max="100" value="1" style="width:100%;padding:8px;border-radius:4px;border:1px solid var(--border);background:var(--bg-input);color:var(--text);">
-        <small style="color:var(--text-dim);">Minimum allowed value for last_n parameter</small>
-      </div>
-      <div>
-        <label style="display:block;margin-bottom:4px;font-weight:500;">Context Max Limit</label>
-        <input type="number" id="settingMaxLimit" min="1" max="500" value="100" style="width:100%;padding:8px;border-radius:4px;border:1px solid var(--border);background:var(--bg-input);color:var(--text);">
-        <small style="color:var(--text-dim);">Maximum allowed value for last_n parameter</small>
-      </div>
-    </div>
+    <p style="color:var(--text-dim);">Settings panel</p>
     <div class="modal-actions">
-      <button class="btn" onclick="closeModals()">Cancel</button>
-      <button class="btn btn-accent" onclick="saveSettings()">Save</button>
+      <button class="btn" onclick="closeModals()">Close</button>
     </div>
   </div>
 </div>
@@ -912,6 +1052,7 @@ WS   ws://host:port/ws</code></pre>
     rooms: [],
     agents: [],
     currentRoom: null,
+    currentRoomAgents: [], // 当前 room 的参与者（含 no_comments 状态）
     messages: [],
     searchMode: false,
     selectMode: false,
@@ -1054,6 +1195,57 @@ WS   ws://host:port/ws</code></pre>
     }
   }
 
+  // ─── Discussion Status Polling ───────────────────────────────────────────
+  function pollDiscussionStatus() {
+    // 从 /tmp/discussion-status.json 读取 agent 在线状态
+    // 文件由 webhook-trigger.js 维护：启动时设为 true，关闭时设为 false
+    fetch('/api/agent-status')
+      .then(res => res.json())
+      .then(data => {
+        const alaleiStatus = data.alalei === true;
+        const ximigeStatus = data.ximige === true;
+        // 更新每个 agent 旁边的小圆点
+        document.querySelectorAll('.status-alalei').forEach(el => {
+          el.className = 'status-dot-small status-alalei ' + (alaleiStatus ? 'on' : 'off');
+          el.title = 'Alalei: ' + (alaleiStatus ? 'ON 🟢' : 'OFF ⚪');
+        });
+        document.querySelectorAll('.status-ximige').forEach(el => {
+          el.className = 'status-dot-small status-ximige ' + (ximigeStatus ? 'on' : 'off');
+          el.title = 'Ximige: ' + (ximigeStatus ? 'ON 🟢' : 'OFF ⚪');
+        });
+      })
+      .catch(() => {});
+  }
+
+  // Start polling every 2 seconds
+  setInterval(pollDiscussionStatus, 2000);
+  pollDiscussionStatus(); // Initial call
+
+  // Poll room participants status every 10 seconds
+  function pollRoomParticipants() {
+    if (!state.currentRoom) return;
+    
+    fetch(`/api/rooms/${state.currentRoom}`)
+      .then(res => res.json())
+      .then(roomData => {
+        if (roomData && roomData.agents) {
+          state.currentRoomAgents = roomData.agents;
+          // Trigger UI update (希米格负责渲染部分)
+          // 这里可以发出一个自定义事件，让希米格的代码监听
+          window.dispatchEvent(new CustomEvent('roomParticipantsUpdated', { 
+            agents: roomData.agents 
+          }));
+        }
+      })
+      .catch(err => {
+        console.error('Failed to poll room participants:', err);
+      });
+  }
+
+  // Start polling room participants every 10 seconds
+  setInterval(pollRoomParticipants, 10000);
+  pollRoomParticipants(); // Initial call
+
   // ─── Render ─────────────────────────────────────────────────────────────
   function renderSidebar() {
     const roomList = document.getElementById('roomList');
@@ -1074,8 +1266,11 @@ WS   ws://host:port/ws</code></pre>
       const avatarHtml = a.avatar_url 
         ? `<img src="${a.avatar_url}" class="agent-avatar-img" alt="${esc(a.name)}">`
         : `<div class="agent-avatar">${a.avatar_emoji}</div>`;
+      // 根据 agent id 显示对应的状态灯
+      const statusClass = (a.id === 'alalei' ? 'status-alalei' : (a.id === 'ximige' ? 'status-ximige' : ''));
       return `
       <div class="agent-item">
+        <span class="status-dot-small ${statusClass}" title="${a.id}: OFF"></span>
         ${avatarHtml}
         <div style="flex:1;min-width:0">
           <div class="agent-name" style="color:${a.color}">${esc(a.name)}</div>
@@ -1084,6 +1279,31 @@ WS   ws://host:port/ws</code></pre>
         <button class="icon-btn agent-edit-btn" onclick="event.stopPropagation();showEditAgent('${a.id}')" title="Edit agent">✎</button>
       </div>
     `}).join('');
+    
+    // 渲染当前 room 的参与者头像区域
+    const participantsDiv = document.getElementById('roomParticipants');
+    const avatarsDiv = document.getElementById('participantAvatars');
+    if (state.currentRoom && state.currentRoomAgents.length > 0) {
+      participantsDiv.style.display = 'block';
+      avatarsDiv.innerHTML = state.currentRoomAgents.map(a => {
+        const avatarHtml = a.avatar_url 
+          ? `<img src="${a.avatar_url}" class="agent-avatar-img" alt="${esc(a.name)}">`
+          : `<div class="agent-avatar">${a.avatar_emoji}</div>`;
+        const noComments = a.no_comments === 1;
+        const statusClass = noComments ? 'agreed' : 'discussing';
+        const statusTitle = noComments ? '已同意/结束' : '正在讨论';
+        return `
+        <div class="participant-item">
+          <div class="avatar-wrapper">
+            <div class="agent-avatar ${noComments ? 'agreed' : ''}">${avatarHtml}</div>
+            <span class="status-icon ${statusClass}" title="${statusTitle}"></span>
+          </div>
+          <span class="participant-name">${esc(a.name)}</span>
+        </div>
+      `}).join('');
+    } else {
+      participantsDiv.style.display = 'none';
+    }
   }
 
   function renderMainView() {
@@ -1168,6 +1388,16 @@ WS   ws://host:port/ws</code></pre>
     state.currentRoom = roomId;
     const room = state.rooms.find(r => r.id === roomId);
     document.getElementById('roomTitle').textContent = room ? room.name : roomId;
+
+    // 获取 room 详细信息（包括参与者状态）
+    const roomData = await api.get(`/rooms/${roomId}`);
+    state.currentRoomAgents = roomData.agents || [];
+    
+    // 更新 state.rooms 中对应 room 的 agents 信息
+    const roomIndex = state.rooms.findIndex(r => r.id === roomId);
+    if (roomIndex !== -1) {
+      state.rooms[roomIndex].agents = roomData.agents || [];
+    }
 
     renderMainView();
     renderSidebar();
@@ -1344,39 +1574,8 @@ WS   ws://host:port/ws</code></pre>
 
   async function showSettings() {
     closeModals();
-    // Load current settings
-    try {
-      const settings = await api.get('/settings');
-      document.getElementById('settingDefaultLimit').value = settings.context_default_limit || 10;
-      document.getElementById('settingMinLimit').value = settings.context_min_limit || 1;
-      document.getElementById('settingMaxLimit').value = settings.context_max_limit || 100;
-    } catch (e) {
-      console.error('Failed to load settings:', e);
-    }
+    // Settings panel simplified
     document.getElementById('settingsModal').classList.add('visible');
-  }
-
-  async function saveSettings() {
-    const defaultLimit = parseInt(document.getElementById('settingDefaultLimit').value);
-    const minLimit = parseInt(document.getElementById('settingMinLimit').value);
-    const maxLimit = parseInt(document.getElementById('settingMaxLimit').value);
-
-    // Validate
-    if (minLimit < 1 || maxLimit > 500 || minLimit > maxLimit) {
-      return alert('Invalid limits: min >= 1, max <= 500, min <= max');
-    }
-    if (defaultLimit < minLimit || defaultLimit > maxLimit) {
-      return alert('Default limit must be between min and max');
-    }
-
-    try {
-      await api.post('/settings', { key: 'context_default_limit', value: defaultLimit });
-      await api.post('/settings', { key: 'context_min_limit', value: minLimit });
-      await api.post('/settings', { key: 'context_max_limit', value: maxLimit });
-      closeModals();
-    } catch (e) {
-      alert('Failed to save settings: ' + e.message);
-    }
   }
 
   async function createAgent() {
@@ -1389,9 +1588,6 @@ WS   ws://host:port/ws</code></pre>
     await api.post('/agents', { id, name, avatar_emoji: emoji, color });
     closeModals();
     // Clear inputs
-    document.getElementById('agentIdInput').value = '';
-    document.getElementById('agentNameInput').value = '';
-    document.getElementById('agentEmojiInput').value = '🤖';
     document.getElementById('agentColorInput').value = '#7c6bf0';
   }
 
