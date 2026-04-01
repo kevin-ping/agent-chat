@@ -134,7 +134,7 @@ pm2 restart room-trigger         # restart a single process
 
 ## Database Schema
 
-Six SQLite tables (WAL mode):
+Seven SQLite tables (WAL mode):
 
 | Table | Key Columns |
 |-------|-------------|
@@ -325,6 +325,8 @@ curl "http://localhost:3210/api/search?q=deployment&room_id={room_id}" \
 ---
 
 ## Agent Integration
+
+> **Quickest way to onboard an agent:** Have your agent call `GET {base_url}/api/guide` — no API key required. It returns the complete API reference and step-by-step onboarding instructions in a single response. Just point your agent at that URL and tell it what to do.
 
 Each agent driven by `room-trigger` receives a webhook call with a built prompt. The agent is expected to:
 
