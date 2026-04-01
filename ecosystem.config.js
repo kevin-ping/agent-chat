@@ -1,66 +1,64 @@
+require('dotenv').config();
+
+const APP_DIR = process.env.APP_DIR || '/var/www/agent-chat';
+
 module.exports = {
-  apps: [
-    {
-      name: "agent-chat-server",
-      script: "server.js",
-      cwd: "/var/www/agent-chat",
+  apps: [{
+      name: 'agent-chat-server',
+      script: 'server.js',
+      cwd: APP_DIR,
       watch: false,
-      restart_delay: 1000,
+      restart_delay: 100,
       exp_backoff_restart_delay: 100,
       max_restarts: 10,
       autorestart: true,
-      out_file: "/var/www/agent-chat/logs/server.log",
-      error_file: "/var/www/agent-chat/logs/server-error.log"
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      out_file: `${APP_DIR}/logs/server.log`,
+      error_file: `${APP_DIR}/logs/server-error.log`
     },
     {
-      name: "webhook-trigger-alalei",
-      script: "webhook-trigger.js",
-      cwd: "/var/www/agent-chat",
+      name: 'room-trigger',
+      script: './triggers/room-trigger.js',
+      cwd: APP_DIR,
+      watch: false,
+      restart_delay: 100,
+      exp_backoff_restart_delay: 100,
+      max_restarts: 10,
+      autorestart: true,
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      out_file: `${APP_DIR}/logs/room-trigger.log`,
+      error_file: `${APP_DIR}/logs/room-trigger-error.log`,
       env: {
-        MY_AGENT_ID: "alalei",
-        ROOM_ID: "493c8ac8-d743-40ea-a9b4-d630e60200d9",
-        WS_URL: "ws://localhost:3210/ws",
-        GATEWAY_URL: "http://127.0.0.1:18789",
-        WEBHOOK_TOKEN: "my-secret-token"
-      },
-      watch: false,
-      restart_delay: 1000,
-      exp_backoff_restart_delay: 100,
-      max_restarts: 10,
-      autorestart: true,
-      out_file: "/var/www/agent-chat/logs/alalei-trigger.log",
-      error_file: "/var/www/agent-chat/logs/alalei-trigger-error.log"
+        MY_AGENT_ID: process.env.MY_AGENT_ID,
+        WS_URL: process.env.WS_URL,
+        WEBHOOK_TOKEN: process.env.WEBHOOK_TOKEN
+      }
     },
+    // Add additional webhook-trigger processes here if needed:
+    // {
+    //   name: 'webhook-trigger-agent',
+    //   script: './triggers/webhook-trigger.js',
+    //   cwd: APP_DIR,
+    //   watch: false,
+    //   restart_delay: 100,
+    //   exp_backoff_restart_delay: 100,
+    //   max_restarts: 10,
+    //   autorestart: true,
+    //   out_file: `${APP_DIR}/logs/agent-trigger.log`,
+    //   error_file: `${APP_DIR}/logs/agent-trigger-error.log`
+    // },
     {
-      name: "webhook-trigger-ximige",
-      script: "webhook-trigger.js",
-      cwd: "/var/www/agent-chat",
-      env: {
-        MY_AGENT_ID: "ximige",
-        ROOM_ID: "493c8ac8-d743-40ea-a9b4-d630e60200d9",
-        WS_URL: "ws://localhost:3210/ws",
-        GATEWAY_URL: "http://127.0.0.1:18789",
-        WEBHOOK_TOKEN: "my-secret-token"
-      },
+      name: 'timeout-daemon',
+      script: 'timeout-daemon.js',
+      cwd: APP_DIR,
       watch: false,
-      restart_delay: 1000,
+      restart_delay: 100,
       exp_backoff_restart_delay: 100,
       max_restarts: 10,
       autorestart: true,
-      out_file: "/var/www/agent-chat/logs/ximige-trigger.log",
-      error_file: "/var/www/agent-chat/logs/ximige-trigger-error.log"
-    },
-    {
-      name: "timeout-daemon",
-      script: "timeout-daemon.js",
-      cwd: "/var/www/agent-chat",
-      watch: false,
-      restart_delay: 1000,
-      exp_backoff_restart_delay: 100,
-      max_restarts: 10,
-      autorestart: true,
-      out_file: "/var/www/agent-chat/logs/timeout-daemon.log",
-      error_file: "/var/www/agent-chat/logs/timeout-daemon-error.log"
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      out_file: `${APP_DIR}/logs/timeout-daemon.log`,
+      error_file: `${APP_DIR}/logs/timeout-daemon-error.log`
     }
   ]
 };

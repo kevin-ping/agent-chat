@@ -10,29 +10,36 @@
  *   pm2 start timeout-daemon.js --name timeout-daemon
  */
 
+require('dotenv').config();
 const { checkTimeout, sendAlert } = require('./timeout-check');
 
 const CHECK_INTERVAL = 30000; // 30 秒
 
 async function main() {
-  console.log('🔍 超时检查守护进程已启动');
-  console.log(`   检查间隔：${CHECK_INTERVAL / 1000} 秒`);
-  
+  console.log(`timeout-daemon start interval=${CHECK_INTERVAL / 1000}s`);
+
   setInterval(async () => {
     try {
-      const result = await checkTimeout();
-      
-      if (result.shouldReset) {
-        console.log(`⏰ 讨论超时！${result.reason}`);
-        console.log(`   重置详情：`, result.resetDetails);
-        
-        // 发送 Telegram 通知
-        await sendAlert(`讨论超时，已自动重置：${result.reason}`);
-      } else {
-        console.log(`✅ 讨论进行中，剩余时间：${Math.floor(300 - result.elapsed)}秒`);
+      const { rooms, anyReset } = await checkTimeout();
+
+      if (rooms.length === 0) {
+        console.log('ok no active discussions');
+        return;
+      }
+
+      for (const r of rooms) {
+        if (r.error) {
+          console.error(`check failed room=${r.roomId}: ${r.error}`);
+        } else if (r.shouldReset) {
+          console.log(`timeout reset room=${r.roomName || r.roomId}: ${r.reason}`);
+          await sendAlert(`讨论超时，已自动重置 [${r.roomName || r.roomId}]：${r.reason}`);
+        } else {
+          const remaining = Math.floor(r.timeoutRemaining != null ? r.timeoutRemaining : 0);
+          console.log(`ok room=${r.roomName || r.roomId} remaining=${remaining}s`);
+        }
       }
     } catch (error) {
-      console.error('❌ 超时检查失败：', error);
+      console.error(`check failed: ${error.message}`);
     }
   }, CHECK_INTERVAL);
 }

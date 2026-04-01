@@ -30,7 +30,7 @@ public/avatars/*
 # agent working files
 .claude/
 .codex/
-docs/
+logs/*.log
 work-space
 AGENTS.md
 CLAUDE.md
