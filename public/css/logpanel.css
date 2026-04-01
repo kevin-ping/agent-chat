@@ -1,0 +1,238 @@
+/* ── Log Panel ───────────────────────────────── */
+.log-panel {
+  border-top: 1px solid var(--border);
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  max-height: 44px;
+  overflow: hidden;
+  transition: max-height 0.3s ease;
+}
+
+.log-panel.expanded { height: 50vh; max-height: 50vh; }
+
+.log-panel-bar {
+  height: 44px;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.log-panel-bar:hover { background: var(--bg-hover, rgba(255,255,255,0.04)); }
+
+.log-panel-title {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.log-badge {
+  background: var(--accent);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 8px;
+  min-width: 16px;
+  text-align: center;
+}
+
+.log-snippet {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.log-panel-chevron {
+  font-size: 9px;
+  color: var(--text-muted);
+  transition: transform 0.3s;
+  flex-shrink: 0;
+}
+
+.log-panel.expanded .log-panel-chevron { transform: rotate(180deg); }
+
+.log-panel-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.log-toolbar {
+  padding: 5px 12px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  gap: 8px;
+}
+
+.log-filters {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.log-filter-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  white-space: nowrap;
+  line-height: 1.6;
+}
+
+.log-filter-label:hover { background: var(--bg-hover, rgba(255,255,255,0.04)); }
+.log-filter-label input { margin: 0; }
+
+.log-filter-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.log-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.log-autoscroll-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.log-entries {
+  flex: 1;
+  overflow-y: auto;
+  padding: 2px 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.log-entry {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 12px;
+  line-height: 1.5;
+  min-width: 0;
+}
+
+.log-entry:hover { background: var(--bg-hover, rgba(255,255,255,0.04)); }
+
+.log-entry.log-historical { opacity: 0.5; }
+
+.log-entry.log-error {
+  background: rgba(220,38,38,0.05);
+  border-left: 2px solid rgba(220,38,38,0.5);
+  padding-left: 10px;
+}
+
+.log-entry.log-error:hover { background: rgba(220,38,38,0.09); }
+
+.log-source-badge {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: #fff;
+  min-width: 58px;
+  text-align: center;
+  letter-spacing: 0.02em;
+}
+
+.log-message {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+.log-entry.log-error .log-message { color: #f87171; }
+
+.log-time {
+  flex-shrink: 0;
+  font-size: 9px;
+  color: var(--text-muted);
+}
+
+/* ── Log Bar Status Indicators ───────────────── */
+.log-bar-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  padding: 0 6px;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  margin: 0 2px;
+}
+
+.log-bar-status-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.log-bar-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-muted);
+  transition: background 0.3s;
+}
+
+.log-bar-status-dot.connected    { background: var(--green); }
+.log-bar-status-dot.disconnected { background: var(--red); }
+.log-bar-status-dot.active       { background: var(--green); }
+.log-bar-status-dot.idle         { background: var(--amber, #d97706); }
+
+/* ── Curl detail entries (AGENT_LOG_DETAIL=1) ──── */
+.log-entry.log-curl {
+  background: rgba(99, 102, 241, 0.05);
+  border-left: 2px solid rgba(99, 102, 241, 0.3);
+  padding-left: 10px;
+}
+.log-entry.log-curl:hover { background: rgba(99, 102, 241, 0.10); }
+.log-entry.log-curl .log-message {
+  color: var(--text-muted);
+  font-size: 10px;
+}

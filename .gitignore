@@ -25,3 +25,14 @@ dist/
 # Avatar images (keep folder, not files)
 public/avatars/*
 !public/avatars/.gitkeep
+
+
+# agent working files
+.claude/
+.codex/
+logs/*.log
+work-space
+AGENTS.md
+CLAUDE.md
+GLOBAL_CLAUDE.md
+AGENT_WORKSPACE.md
