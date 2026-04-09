@@ -2,9 +2,7 @@
 node_modules/
 
 # Database
-chat.db
-chat.db-shm
-chat.db-wal
+data/*
 
 # macOS
 .DS_Store
@@ -24,8 +22,7 @@ dist/
 
 # Avatar images (keep folder, not files)
 public/avatars/*
-!public/avatars/.gitkeep
-
+!.gitkeep
 
 # agent working files
 .claude/

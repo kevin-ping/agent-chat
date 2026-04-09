@@ -1,25 +1,12 @@
 'use strict';
 
-const PRIVATE_FIELDS = ['api_key', 'webhook_token', 'session_key'];
-
+// No private fields to strip in the new architecture (api_key, webhook_token, session_key removed)
 function toPublicAgent(agent) {
-  if (!agent) return agent;
-  const pub = { ...agent };
-  for (const f of PRIVATE_FIELDS) delete pub[f];
-  return pub;
+  return agent || null;
 }
 
 function toPublicAgents(agents) {
-  return agents.map(toPublicAgent);
+  return agents || [];
 }
 
-// Used only in POST /api/register/activate response — includes api_key for one-time delivery
-function toPublicAgentWithKey(agent) {
-  if (!agent) return agent;
-  const pub = { ...agent };
-  delete pub.webhook_token;
-  delete pub.session_key;
-  return pub;
-}
-
-module.exports = { toPublicAgent, toPublicAgents, toPublicAgentWithKey };
+module.exports = { toPublicAgent, toPublicAgents };

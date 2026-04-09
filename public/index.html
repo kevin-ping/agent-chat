@@ -117,7 +117,9 @@ WS   ws://host:port/ws</code></pre>
     <div class="log-panel-body" id="logPanelBody">
       <div class="log-toolbar">
         <div class="log-filters" id="logFilters"></div>
+        <input type="text" class="log-search-input" id="logSearchInput" placeholder="Filter...">
         <div class="log-toolbar-actions">
+          <span class="log-count" id="logCount"></span>
           <label class="log-autoscroll-label">
             <input type="checkbox" id="logAutoScroll" checked> Auto-scroll
           </label>
@@ -157,16 +159,16 @@ WS   ws://host:port/ws</code></pre>
       <input type="text" id="agentColorInput" value="#7c6bf0" placeholder="#7c6bf0">
     </div>
     <div class="form-group">
-      <label>Hook URL</label>
-      <input type="text" id="agentHookUrlInput" placeholder="https://...">
+      <label>Channel Type</label>
+      <input type="text" id="agentChannelTypeInput" placeholder="e.g. telegram">
     </div>
     <div class="form-group">
-      <label>Webhook Token</label>
-      <input type="text" id="agentWebhookTokenInput" placeholder="Bearer token for this agent">
+      <label>Channel ID</label>
+      <input type="text" id="agentChannelIdInput" placeholder="e.g. @my_channel">
     </div>
     <div class="form-group">
-      <label>Session Key</label>
-      <input type="text" id="agentSessionKeyInput" placeholder="e.g. agent-chat-discussion">
+      <label>Channel Name</label>
+      <input type="text" id="agentChannelNameInput" placeholder="e.g. alice_bot">
     </div>
     <div class="modal-actions">
       <button class="btn" data-btn="close-modal">Cancel</button>
@@ -188,16 +190,16 @@ WS   ws://host:port/ws</code></pre>
       <input type="text" id="editAgentNameInput">
     </div>
     <div class="form-group">
-      <label>Hook URL</label>
-      <input type="text" id="editAgentHookUrlInput" placeholder="https://...">
+      <label>Channel Type</label>
+      <input type="text" id="editAgentChannelTypeInput" placeholder="e.g. telegram">
     </div>
     <div class="form-group">
-      <label>Webhook Token</label>
-      <input type="text" id="editAgentWebhookTokenInput" placeholder="Bearer token for this agent">
+      <label>Channel ID</label>
+      <input type="text" id="editAgentChannelIdInput" placeholder="e.g. @my_channel">
     </div>
     <div class="form-group">
-      <label>Session Key</label>
-      <input type="text" id="editAgentSessionKeyInput" placeholder="e.g. agent-chat-discussion">
+      <label>Channel Name</label>
+      <input type="text" id="editAgentChannelNameInput" placeholder="e.g. alice_bot">
     </div>
     <div class="form-group">
       <label>Upload Avatar Image</label>
@@ -334,7 +336,6 @@ WS   ws://host:port/ws</code></pre>
   </div>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <script type="module" src="/js/main.js"></script>
 </body>
 </html>

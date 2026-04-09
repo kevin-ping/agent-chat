@@ -10,11 +10,10 @@ export const ICONS = {
 
 // ─── Log Service Colors ───────────────────────────────────────────────────
 export const LOG_SERVICE_COLORS = {
-  'api-sys':           '#0891b2',  // 系统调用
-  'api-agents':        '#8b5cf6',  // Agent 调用
+  'api-sys':           '#0891b2',
+  'api-agents':        '#8b5cf6',
   'agent-chat-server': '#4f46e5',
-  'room-trigger':      '#16a34a',
-  'timeout-daemon':    '#d97706',
+  'agent-monitor':     '#16a34a',
 };
 
 // ─── Application State ───────────────────────────────────────────────────
@@ -26,7 +25,8 @@ export const state = {
   searchMode: false,
   selectMode: false,
   selectedMessages: [],
-  collapsedGroups: new Set()
+  collapsedGroups: new Set(),
+  thinkingAgents: new Map()
 };
 
 // ─── Log State ───────────────────────────────────────────────────────────
@@ -36,9 +36,11 @@ export const logState = {
   isOpen: false,
   eventSource: null,
   newCount: 0,
-  hiddenServices: new Set(),
+  hiddenServices: new Set(['api-sys', 'agent-chat-server']),
   autoScroll: true,
   filtersRendered: false,
   wsConnected: false,
   serviceLastSeen: {},
+  errorOnly: false,
+  searchQuery: '',
 };

@@ -7,13 +7,13 @@ export async function createAgent() {
   const agent_id = document.getElementById('agentIdInput').value.trim();
   const name = document.getElementById('agentNameInput').value.trim();
   const color = document.getElementById('agentColorInput').value.trim();
-  const agent_hook_url = document.getElementById('agentHookUrlInput').value.trim();
-  const webhook_token = document.getElementById('agentWebhookTokenInput').value.trim();
-  const session_key = document.getElementById('agentSessionKeyInput').value.trim();
+  const channel_type = document.getElementById('agentChannelTypeInput').value.trim();
+  const channel_id = document.getElementById('agentChannelIdInput').value.trim();
+  const channel_name = document.getElementById('agentChannelNameInput').value.trim();
   if (!agent_id || !name) return alert('ID and Name are required');
 
   try {
-    await api.post('/agents', { agent_id, name, color, agent_hook_url, webhook_token, session_key });
+    await api.post('/agents', { agent_id, name, color, channel_type, channel_id, channel_name });
     closeModals();
     document.getElementById('agentColorInput').value = '#7c6bf0';
   } catch (error) {
@@ -28,9 +28,9 @@ export function showEditAgent(agentId) {
   document.getElementById('editAgentId').value = agent.agent_id;
   document.getElementById('editAgentIdDisplay').value = agent.agent_id;
   document.getElementById('editAgentNameInput').value = agent.name;
-  document.getElementById('editAgentHookUrlInput').value = agent.agent_hook_url || '';
-  document.getElementById('editAgentWebhookTokenInput').value = agent.webhook_token || '';
-  document.getElementById('editAgentSessionKeyInput').value = agent.session_key || '';
+  document.getElementById('editAgentChannelTypeInput').value = agent.channel_type || '';
+  document.getElementById('editAgentChannelIdInput').value = agent.channel_id || '';
+  document.getElementById('editAgentChannelNameInput').value = agent.channel_name || '';
   document.getElementById('editAgentColorInput').value = agent.color || '#7c6bf0';
   document.getElementById('editAgentAvatarInput').value = '';
 
@@ -111,13 +111,13 @@ export async function saveEditAgent() {
   const id = document.getElementById('editAgentId').value;
   const name = document.getElementById('editAgentNameInput').value.trim();
   const color = document.getElementById('editAgentColorInput').value.trim();
-  const agent_hook_url = document.getElementById('editAgentHookUrlInput').value.trim();
-  const webhook_token = document.getElementById('editAgentWebhookTokenInput').value.trim();
-  const session_key = document.getElementById('editAgentSessionKeyInput').value.trim();
+  const channel_type = document.getElementById('editAgentChannelTypeInput').value.trim();
+  const channel_id = document.getElementById('editAgentChannelIdInput').value.trim();
+  const channel_name = document.getElementById('editAgentChannelNameInput').value.trim();
   if (!name) return alert('Name is required');
 
   try {
-    const updated = await api.patch(`/agents/${id}`, { name, color, agent_hook_url, webhook_token, session_key });
+    const updated = await api.patch(`/agents/${id}`, { name, color, channel_type, channel_id, channel_name });
     const idx = state.agents.findIndex(a => a.agent_id === id);
     if (idx !== -1) state.agents[idx] = updated;
     renderSidebar();

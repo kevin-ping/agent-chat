@@ -10,18 +10,13 @@ router.get('/:roomId/context', (req, res) => {
   const roomRow = stmts.getRoom.get(roomId);
   if (!roomRow) return res.status(404).json({ error: 'Room not found' });
 
-  // agent_id query param: accept integer agents.id
   const { last_n, agent_id } = req.query;
 
   const room = stmts.getRoom.get(roomId);
 
-  const settings = stmts.getAllSettings.all();
-  const settingsMap = {};
-  for (const s of settings) settingsMap[s.key] = parseInt(s.value) || config.DEFAULT_LAST_N;
-
-  const minLimit = settingsMap.context_min_limit || config.MIN_LAST_N;
-  const maxLimit = settingsMap.context_max_limit || config.MAX_LAST_N;
-  const defaultLimit = settingsMap.context_default_limit || config.DEFAULT_LAST_N;
+  const minLimit = config.MIN_LAST_N;
+  const maxLimit = config.MAX_LAST_N;
+  const defaultLimit = config.DEFAULT_LAST_N;
 
   const allMessages = stmts.getMessages.all(roomId);
   let effectiveLimit = defaultLimit;
@@ -32,7 +27,6 @@ router.get('/:roomId/context', (req, res) => {
 
   const agents = toPublicAgents(stmts.getRoomAgents.all(roomId));
 
-  // agent_id param: match by integer id
   let currentAgent = null;
   if (agent_id !== undefined && agent_id !== null) {
     const parsedId = parseInt(agent_id, 10);

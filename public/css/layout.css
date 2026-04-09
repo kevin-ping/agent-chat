@@ -9,9 +9,9 @@ body {
 
 /* ── Sidebar ─────────────────────────────────── */
 .sidebar {
-  width: 320px;
-  min-width: 260px;
-  max-width: 400px;
+  width: 360px;
+  min-width: 360px;
+  max-width: 420px;
   background: var(--bg-secondary);
   border-right: 1px solid var(--border);
   display: flex;

@@ -236,3 +236,90 @@
   color: var(--text-muted);
   font-size: 10px;
 }
+
+/* ── Log Message Tokens ─────────────────────────────────────────────────── */
+.log-token-method  { font-weight: 600; }
+.log-method-GET    { color: #06b6d4; }
+.log-method-POST   { color: #22c55e; }
+.log-method-DELETE { color: #ef4444; }
+.log-method-PUT    { color: #eab308; }
+.log-method-PATCH  { color: #f97316; }
+
+.log-token-status  { font-weight: 600; margin-left: 4px; }
+.log-status-2xx    { color: #22c55e; }
+.log-status-3xx    { color: #06b6d4; }
+.log-status-4xx    { color: #f59e0b; }
+.log-status-5xx    { color: #ef4444; }
+
+.log-token-agent   { color: #a78bfa; font-weight: 500; }
+.log-token-ws      { color: #67e8f9; }
+.log-token-trigger { color: #fbbf24; font-weight: 600; }
+
+/* ── Expandable Message ─────────────────────────────────────────────────── */
+.log-expand-chevron {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--text-muted);
+  opacity: 0.4;
+  width: 10px;
+  text-align: center;
+  cursor: pointer;
+  transition: transform 0.15s, opacity 0.15s;
+}
+.log-entry:hover .log-expand-chevron { opacity: 1; }
+.log-expand-chevron.rotated { transform: rotate(90deg); }
+.log-entry-expanded { align-items: flex-start; }
+.log-entry-expanded .log-message {
+  white-space: pre-wrap;
+  overflow: visible;
+  text-overflow: unset;
+  word-break: break-all;
+}
+
+/* ── Error-only Filter ──────────────────────────────────────────────────── */
+.log-filter-error { border-color: rgba(220,38,38,0.4); }
+.log-filter-error:has(input:checked) {
+  background: rgba(220,38,38,0.1);
+  border-color: rgba(220,38,38,0.6);
+  color: #f87171;
+}
+
+/* ── Search Input ───────────────────────────────────────────────────────── */
+.log-search-input {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  color: var(--text-primary);
+  width: 140px;
+  outline: none;
+  flex-shrink: 0;
+}
+.log-search-input:focus { border-color: var(--accent); }
+.log-highlight { background: rgba(234,179,8,0.35); color: inherit; border-radius: 2px; }
+
+/* ── Log Count ──────────────────────────────────────────────────────────── */
+.log-count {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* ── Copy Button ────────────────────────────────────────────────────────── */
+.log-copy-btn {
+  flex-shrink: 0;
+  opacity: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 0 2px;
+  line-height: 1;
+  transition: opacity 0.15s;
+}
+.log-entry:hover .log-copy-btn { opacity: 0.6; }
+.log-copy-btn:hover { opacity: 1 !important; color: var(--text-primary); }

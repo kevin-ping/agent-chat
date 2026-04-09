@@ -1,6 +1,6 @@
 import { initTheme, toggleTheme } from './theme.js';
 import { connectWS, pollRoomParticipants } from './websocket.js';
-import { toggleLogPanel, clearLogPanel, scrollLogToBottom } from './logs.js';
+import { toggleLogPanel, clearLogPanel, scrollLogToBottom, renderLogEntries, updateLogCount } from './logs.js';
 import { state, logState } from './state.js';
 import { renderSidebar } from './render.js';
 import { showModal, showSettings, closeModals, saveAdminKey } from './modals.js';
@@ -55,6 +55,11 @@ document.querySelector('[data-btn="cancel-select"]').addEventListener('click', t
 // ─── Log Panel Bar ───────────────────────────────────────────────────────
 document.getElementById('logPanelBar').addEventListener('click', toggleLogPanel);
 document.querySelector('[data-btn="clear-log"]').addEventListener('click', clearLogPanel);
+document.getElementById('logSearchInput').addEventListener('input', (e) => {
+  logState.searchQuery = e.target.value.trim().toLowerCase();
+  renderLogEntries();
+  if (logState.autoScroll) scrollLogToBottom();
+});
 
 // ─── Search Input ────────────────────────────────────────────────────────
 document.getElementById('searchInput').addEventListener('input', (e) => handleSearch(e.target.value));
@@ -86,40 +91,6 @@ document.getElementById('roomList').addEventListener('click', (e) => {
     showEditRoom(editBtn.dataset.roomId);
     return;
   }
-  const idEl = e.target.closest('[data-action="copy-id"]');
-  if (idEl) {
-    e.stopPropagation();
-    const id = idEl.dataset.id;
-
-    // Copy with fallback for environments where clipboard API is unavailable
-    const copyText = async (text) => {
-      if (navigator.clipboard) {
-        return navigator.clipboard.writeText(text);
-      }
-      // Fallback: use execCommand (deprecated but wider support)
-      const textarea = document.createElement('textarea');
-      textarea.value = text;
-      textarea.style.position = 'fixed';
-      textarea.style.opacity = '0';
-      document.body.appendChild(textarea);
-      textarea.select();
-      try {
-        document.execCommand('copy');
-      } finally {
-        document.body.removeChild(textarea);
-      }
-    };
-
-    copyText(id).then(() => {
-      const orig = idEl.textContent;
-      idEl.textContent = 'copied!';
-      idEl.style.opacity = '1';
-      setTimeout(() => { idEl.textContent = orig; idEl.style.opacity = ''; }, 1200);
-    }).catch(() => {
-      alert('Failed to copy to clipboard');
-    });
-    return;
-  }
   const roomItem = e.target.closest('[data-action="select-room"]');
   if (roomItem) {
     selectRoom(roomItem.dataset.roomId);
@@ -147,24 +118,41 @@ document.getElementById('agentList').addEventListener('click', (e) => {
 
 // ─── Event Delegation: History Modal ─────────────────────────────────────
 document.getElementById('historyList').addEventListener('click', async (e) => {
-  const exportBtn = e.target.closest('[data-action="export-pdf"]');
-  if (exportBtn) {
-    const { room, topic, title } = exportBtn.dataset;
-    exportBtn.disabled = true;
-    exportBtn.textContent = '...';
+  const mdBtn = e.target.closest('[data-action="export-md"]');
+  if (mdBtn) {
+    const { room, topic, title } = mdBtn.dataset;
+    mdBtn.disabled = true;
+    mdBtn.textContent = '...';
     try {
-      const { exportTopicPdfFromMain } = await import('./rooms.js');
-      await exportTopicPdfFromMain(room, topic, title);
+      const { exportTopicMd } = await import('./rooms.js');
+      await exportTopicMd(room, topic, title);
     } catch (err) {
-      alert('PDF export failed: ' + err.message);
+      alert('MD export failed: ' + err.message);
     } finally {
-      exportBtn.disabled = false;
-      exportBtn.textContent = 'PDF';
+      mdBtn.disabled = false;
+      mdBtn.textContent = 'MD';
     }
     return;
   }
 
-  const deleteBtn = e.target.closest('[data-action="delete-topic"]');
+  const htmlBtn = e.target.closest('[data-action="export-html"]');
+  if (htmlBtn) {
+    const { room, topic, title } = htmlBtn.dataset;
+    htmlBtn.disabled = true;
+    htmlBtn.textContent = '...';
+    try {
+      const { exportTopicHtml } = await import('./rooms.js');
+      await exportTopicHtml(room, topic, title);
+    } catch (err) {
+      alert('HTML export failed: ' + err.message);
+    } finally {
+      htmlBtn.disabled = false;
+      htmlBtn.textContent = 'HTML';
+    }
+    return;
+  }
+
+const deleteBtn = e.target.closest('[data-action="delete-topic"]');
   if (deleteBtn) {
     const { room, topic, title } = deleteBtn.dataset;
     if (!confirm(`Delete topic "${title}" and all its messages? This action cannot be undone.`)) return;

@@ -28,32 +28,42 @@ const _emptyStateEl = document.getElementById('emptyState');
 
 // ─── Sidebar ─────────────────────────────────────────────────────────────
 export function renderSidebar() {
-  console.log('[renderSidebar] Called, state.rooms:', state.rooms);
   const roomList = document.getElementById('roomList');
-  if (!roomList) {
-    console.error('[renderSidebar] roomList element not found!');
-    return;
-  }
+  if (!roomList) return;
   roomList.innerHTML = state.rooms.map(r => {
     // Sort agents by integer id
     const agents = (r.agents || []).slice().sort((a, b) => a.id - b.id);
     const avatarsHtml = agents.map(a => {
       const isActive = a.no_comments !== 0;
-      // current_turn is integer agents.id; a.id is also integer — direct comparison
       const isTurn = r.current_turn === a.id;
+      const roomThinking = state.thinkingAgents.get(r.id);
+      const isThinking = roomThinking ? roomThinking.has(a.id) : false;
       const avatarCls = ['room-agent-avatar', isActive ? '' : 'inactive'].filter(Boolean).join(' ');
-      const wrapCls = ['avatar-ring-wrap', isTurn ? 'current-turn' : ''].filter(Boolean).join(' ');
+      const wrapCls = ['avatar-ring-wrap', isTurn ? 'current-turn' : '', isThinking ? 'thinking' : ''].filter(Boolean).join(' ');
       const inner = a.avatar_url
         ? `<img src="${a.avatar_url}" class="${avatarCls}" title="${esc(a.name)}" alt="${esc(a.name)}">`
         : `<div class="${avatarCls}" style="background:${a.color || '#6366f1'}" title="${esc(a.name)}">${esc(a.name.charAt(0).toUpperCase())}</div>`;
       const confirmedBar = a.no_comments === 2 ? '<div class="confirmed-bar"></div>' : '';
-      return `<div class="${wrapCls}">${inner}${confirmedBar}</div>`;
+      const thinkingOverlay = isThinking
+        ? `<div class="thinking-ring"></div>`
+        : '';
+      return `<div class="${wrapCls}">${inner}${confirmedBar}${thinkingOverlay}</div>`;
     }).join('');
 
     const placeholderCount = Math.max(0, 7 - agents.length);
     const placeholdersHtml = Array.from({ length: placeholderCount })
       .map(() => `<div class="avatar-ring-wrap"><div class="room-agent-avatar room-agent-avatar--placeholder"></div></div>`)
       .join('');
+
+    // Moderator slot — always rendered as the 8th position
+    const modAgent = r.moderator_id != null ? agents.find(a => a.id === r.moderator_id) : null;
+    const moderatorHtml = modAgent
+      ? `<div class="avatar-ring-wrap moderator-slot"><span class="moderator-crown">♛</span>${
+          modAgent.avatar_url
+            ? `<img src="${modAgent.avatar_url}" class="room-agent-avatar" title="Moderator: ${esc(modAgent.name)}" alt="${esc(modAgent.name)}">`
+            : `<div class="room-agent-avatar" style="background:${modAgent.color || '#6366f1'}" title="Moderator: ${esc(modAgent.name)}">${esc(modAgent.name.charAt(0).toUpperCase())}</div>`
+        }</div>`
+      : `<div class="avatar-ring-wrap moderator-slot"><span class="moderator-crown">♛</span><div class="room-agent-avatar room-agent-avatar--placeholder"></div></div>`;
 
     const isDiscussionActive = r.discussion === 1;
     const inConfirmation = r.in_confirmation === 1;
@@ -69,30 +79,28 @@ export function renderSidebar() {
     <div class="room-item ${state.currentRoom === r.id ? 'active' : ''} ${isDiscussionActive ? 'discussion-active' : ''}"
          data-action="select-room" data-room-id="${r.id}"
          style="border-left: 3px solid ${roomColor};">
+      <div class="room-item-actions">
+        <button class="icon-btn room-edit-btn" data-action="edit-room" data-room-id="${r.id}" title="Edit room">${ICONS.pencil}</button>
+        <span class="room-id">#${esc(r.id)}</span>
+      </div>
       <div class="room-info">
         <div class="room-name">${statusDot}${esc(r.name)}${r.has_password ? ' <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.5;vertical-align:middle;margin-left:2px"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>' : ''}</div>
-        <div class="room-id" data-action="copy-id" data-id="${esc(r.id)}" title="Click to copy">${esc(r.id)}</div>
         <div class="room-meta">${r.message_count || 0} msgs · ${r.turn_mode}</div>
-        <div class="room-agents">${avatarsHtml}${placeholdersHtml}</div>
+        <hr class="room-divider">
+        <div class="room-agents">${avatarsHtml}${placeholdersHtml}${moderatorHtml}</div>
       </div>
-      <button class="icon-btn room-edit-btn" data-action="edit-room" data-room-id="${r.id}" title="Edit room">${ICONS.pencil}</button>
     </div>
   `}).join('');
 
   const agentList = document.getElementById('agentList');
   const groups = {};
   for (const a of state.agents) {
-    const key = a.agent_hook_url || '__no_hook__';
+    const key = a.channel_type || '__default__';
     if (!groups[key]) groups[key] = [];
     groups[key].push(a);
   }
   agentList.innerHTML = Object.entries(groups).map(([key, groupAgents]) => {
-    let label;
-    if (key === '__no_hook__') {
-      label = 'No Hook';
-    } else {
-      try { label = new URL(key).hostname; } catch { label = key; }
-    }
+    const label = key === '__default__' ? 'Agents' : key;
     const items = groupAgents.map(a => {
       const avatarHtml = a.avatar_url
         ? `<img src="${a.avatar_url}" class="agent-avatar-img" alt="${esc(a.name)}">`
@@ -173,10 +181,12 @@ export function renderMessages(highlight = null) {
         <div class="message-body">
           <div class="message-header">
             <span class="message-author" style="color:${m.color || '#e4e4e8'}">${esc(m.agent_name || 'Unknown')}</span>
-            <span class="message-seq">#${m.sequence}</span>
-            <span class="message-time">${formatTime(m.created_at)}</span>
-            <button class="message-delete-btn" data-action="delete-message" data-message-id="${m.id}" title="Delete this message">${ICONS.trash}</button>
-            ${state.selectMode ? `<input type="checkbox" class="message-checkbox" data-action="checkbox-select" data-id="${m.id}" ${isSelected ? 'checked' : ''}>` : ''}
+            <div class="message-header-right">
+              <span class="message-time">${formatTime(m.created_at)}</span>
+              <span class="message-seq">#${m.id}</span>
+              <button class="message-delete-btn" data-action="delete-message" data-message-id="${m.id}" title="Delete this message">${ICONS.trash}</button>
+              ${state.selectMode ? `<input type="checkbox" class="message-checkbox" data-action="checkbox-select" data-id="${m.id}" ${isSelected ? 'checked' : ''}>` : ''}
+            </div>
           </div>
           <div class="message-content">${content}</div>
         </div>

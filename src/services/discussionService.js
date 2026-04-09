@@ -6,7 +6,6 @@ function getDiscussionStatus(roomId) {
   const room = stmts.getRoomDiscussion.get(roomId);
   if (!room) return null;
 
-  // getAllAgentsInRoom returns {agent_id, room_id, no_comments} rows (agent_id is INTEGER)
   const agentsInRoom = stmts.getAllAgentsInRoom.all(roomId);
   const noCommentsMap = {};
   let agreedCount = 0;
@@ -18,39 +17,27 @@ function getDiscussionStatus(roomId) {
   }
 
   const totalAgents = agentsInRoom.length;
-  let timeoutRemaining = null;
-  if (room.discussion === 1) {
-    const elapsed = (Date.now() - new Date(room.last_activity_at)) / 1000;
-    timeoutRemaining = Math.max(0, (room.discussion_timeout || 300) - elapsed);
-  }
 
   return {
     discussion: room.discussion === 1,
     moderator_id: room.moderator_id,
     no_comments: noCommentsMap,
     shouldContinue: agreedCount < totalAgents,
-    lastActivity: room.last_activity_at,
-    timeoutRemaining
+    lastActivity: room.last_activity_at
   };
 }
 
-function startDiscussion(roomId, moderatorId, timeoutSeconds, topicTitle) {
+function startDiscussion(roomId, moderatorId, topicId) {
   stmts.resetAllAgentsInRoom.run(roomId);
-  stmts.setRoomDiscussion.run(1, moderatorId, timeoutSeconds || 300, new Date().toISOString(), roomId);
+  stmts.setRoomDiscussion.run(1, moderatorId, new Date().toISOString(), topicId, roomId);
 
-  let topic = null;
-  if (topicTitle) {
-    stmts.insertTopic.run(roomId, topicTitle);
-    // Get the newly created topic
-    const topics = stmts.listTopics.all(roomId);
-    topic = topics[0];
-  }
+  const topic = stmts.getTopic.get(topicId);
 
   return {
     success: true,
     message: 'Discussion started',
     agentsWithStatus: getAgentsWithStatus(roomId),
-    roomStatus: { discussion: true, moderator_id: moderatorId, timeout: timeoutSeconds || 300 },
+    roomStatus: { discussion: true, moderator_id: moderatorId, topic_id: topicId },
     topic: topic || null
   };
 }
@@ -65,24 +52,33 @@ function randomizeNextTurn(roomId) {
   stmts.updateRoomTurn.run(picked, roomId);
 }
 
-function stopDiscussion(roomId, reason) {
-  // Close any open topic for this room before stopping discussion
-  const openTopic = stmts.getOpenTopicForRoom.get(roomId);
-  if (openTopic) {
-    stmts.closeTopic.run(openTopic.id);
-  }
+function randomizeNextModerator(roomId) {
+  const agents = stmts.getAllAgentsInRoom.all(roomId);
+  if (!agents || agents.length === 0) return;
+  const picked = agents[Math.floor(Math.random() * agents.length)];
+  stmts.setRoomModerator.run(picked.agent_id, roomId);
+}
 
+function stopDiscussion(roomId, reason) {
+  const openTopic = stmts.getOpenTopicForRoom.get(roomId);
+  const roomRow   = stmts.getRoomDiscussion.get(roomId);
+  const moderatorId = roomRow ? roomRow.moderator_id : null;
+
+  // Topic is NOT closed here — the moderator closes it after writing the summary.
+  stmts.setAllAgentsConfirmed.run(roomId);
   stmts.stopRoomDiscussion.run(roomId);
   randomizeNextTurn(roomId);
+  randomizeNextModerator(roomId);
   return {
     success: true,
     message: 'Discussion stopped: ' + reason,
     reason,
-    agentsWithStatus: getAgentsWithStatus(roomId)
+    agentsWithStatus: getAgentsWithStatus(roomId),
+    moderatorId,
+    topicId: openTopic ? openTopic.id : null
   };
 }
 
-// agentId is INTEGER (agents.id)
 function setAgentNoComments(agentId, roomId, value) {
   const room = stmts.getRoomDiscussion.get(roomId);
   if (!room || room.discussion !== 1) {
@@ -115,42 +111,22 @@ function setAgentNoComments(agentId, roomId, value) {
   } else {
     const allConfirmed = agentsStatus.every(a => a.no_comments >= 2);
     if (allConfirmed) {
+      const oldModeratorId = updatedRoom.moderator_id;
+      const openTopic = stmts.getOpenTopicForRoom.get(roomId);
+      // Topic is NOT closed here — the moderator closes it after writing the summary.
       stmts.stopRoomDiscussion.run(roomId);
       randomizeNextTurn(roomId);
-      consensusEvent = { type: 'discussion_stopped', reason: 'consensus' };
+      randomizeNextModerator(roomId);
+      consensusEvent = {
+        type: 'discussion_stopped',
+        reason: 'consensus',
+        moderator_id: oldModeratorId,
+        topic_id: openTopic ? openTopic.id : null
+      };
     }
   }
 
   return { agentsWithStatus: getAgentsWithStatus(roomId), consensusEvent };
 }
 
-function checkTimeout(roomId) {
-  const room = stmts.getRoomDiscussion.get(roomId);
-  if (!room) return null;
-
-  if (room.discussion !== 1) {
-    return { shouldReset: false, reason: 'not in discussion', elapsed: 0 };
-  }
-
-  const timeout = room.discussion_timeout || 300;
-  const elapsed = (Date.now() - new Date(room.last_activity_at)) / 1000;
-
-  if (elapsed > timeout) {
-    const openTopic = stmts.getOpenTopicForRoom.get(roomId);
-    if (openTopic) stmts.closeTopic.run(openTopic.id);
-
-    stmts.resetAllAgentsInRoom.run(roomId);
-    stmts.stopRoomDiscussion.run(roomId);
-    randomizeNextTurn(roomId);
-    return {
-      shouldReset: true,
-      reason: `timeout after ${elapsed}s (timeout: ${timeout}s)`,
-      elapsed,
-      resetDetails: { agentsReset: true, discussionStopped: true }
-    };
-  }
-
-  return { shouldReset: false, reason: 'active', elapsed };
-}
-
-module.exports = { getDiscussionStatus, startDiscussion, stopDiscussion, setAgentNoComments, checkTimeout };
+module.exports = { getDiscussionStatus, startDiscussion, stopDiscussion, setAgentNoComments };

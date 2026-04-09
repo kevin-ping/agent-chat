@@ -1,5 +1,5 @@
 import { state } from './state.js';
-import { api } from './api.js';
+import { api, getAdminKey } from './api.js';
 import { renderSidebar, renderMainView, renderMessages, updateTurnBadge } from './render.js';
 import { closeModals } from './modals.js';
 import { esc } from './utils.js';
@@ -243,28 +243,27 @@ export async function showHistory() {
             <span style="font-size:11px;padding:2px 8px;border-radius:12px;background:${statusColor}22;color:${statusColor};font-weight:600">${t.status}</span>
           </div>
           <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">${countLabel} &middot; ${t.created_at}</div>
-          <div style="display:flex;gap:6px">
-            <a href="/api/rooms/${roomId}/topics/${t.id}/export?format=md"
-               download
-               style="font-size:12px;padding:4px 10px;border:1px solid var(--border);border-radius:5px;text-decoration:none;color:var(--text-primary);background:var(--bg-secondary)"
-            >MD</a>
-            <a href="/api/rooms/${roomId}/topics/${t.id}/export?format=html"
-               target="_blank"
-               style="font-size:12px;padding:4px 10px;border:1px solid var(--border);border-radius:5px;text-decoration:none;color:var(--text-primary);background:var(--bg-secondary)"
-            >HTML</a>
+          <div style="display:flex;gap:6px;align-items:center">
             <button
-               data-action="export-pdf"
+               data-action="export-md"
                data-room="${roomId}"
                data-topic="${t.id}"
                data-title="${esc(t.title)}"
                style="font-size:12px;padding:4px 10px;border:1px solid var(--border);border-radius:5px;cursor:pointer;color:var(--text-primary);background:var(--bg-secondary)"
-            >PDF</button>
+            >MD</button>
+            <button
+               data-action="export-html"
+               data-room="${roomId}"
+               data-topic="${t.id}"
+               data-title="${esc(t.title)}"
+               style="font-size:12px;padding:4px 10px;border:1px solid var(--border);border-radius:5px;cursor:pointer;color:var(--text-primary);background:var(--bg-secondary)"
+            >HTML</button>
             <button
                data-action="delete-topic"
                data-room="${roomId}"
                data-topic="${t.id}"
                data-title="${esc(t.title)}"
-               style="font-size:12px;padding:4px 10px;border:1px solid #ef4444;border-radius:5px;cursor:pointer;color:#ef4444;background:rgba(239,68,68,0.1)"
+               style="font-size:12px;padding:4px 10px;border:1px solid #ef4444;border-radius:5px;cursor:pointer;color:#ef4444;background:rgba(239,68,68,0.1);margin-left:auto"
             >Delete</button>
           </div>
         </div>`;
@@ -277,40 +276,45 @@ export async function showHistory() {
   }
 }
 
-export async function exportTopicPdfFromMain(roomId, topicId, title) {
+function topicFilename(title, ext) {
+  return `${title.replace(/[^a-z0-9\-_ ]/gi, '_')}.${ext}`;
+}
+
+export async function exportTopicMd(roomId, topicId, title) {
   try {
-    const res = await fetch(`/api/rooms/${roomId}/topics/${topicId}/export?format=html`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const htmlContent = await res.text();
-
-    // Parse HTML and extract body for pdf rendering
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(htmlContent, 'text/html');
-    const container = document.createElement('div');
-    container.style.cssText = 'position:absolute;left:-9999px;top:0;width:800px;font-family:sans-serif';
-    container.innerHTML = doc.body.innerHTML;
-
-    // Execute inline scripts (markdown-it render)
-    const scripts = container.querySelectorAll('script');
-    scripts.forEach(s => {
-      try { /* eslint-disable-next-line no-new-func */ new Function(s.textContent)(); } catch {}
+    const res = await fetch(`/api/rooms/${roomId}/topics/${topicId}/export?format=md`, {
+      headers: { 'X-API-Key': getAdminKey() }
     });
-
-    document.body.appendChild(container);
-
-    const opt = {
-      margin: [15, 15],
-      filename: `${title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.pdf`,
-      html2canvas: { scale: 2, useCORS: true },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
-    };
-
-    await window.html2pdf().set(opt).from(container).save();
-    document.body.removeChild(container);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const text = await res.text();
+    const blob = new Blob([text], { type: 'text/markdown; charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = topicFilename(title, 'md');
+    a.click();
+    URL.revokeObjectURL(url);
   } catch (e) {
-    alert('PDF export failed: ' + e.message);
+    alert('MD export failed: ' + e.message);
   }
 }
+
+export async function exportTopicHtml(roomId, topicId, title) {
+  try {
+    const res = await fetch(`/api/rooms/${roomId}/topics/${topicId}/export?format=html`, {
+      headers: { 'X-API-Key': getAdminKey() }
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const html = await res.text();
+    const blob = new Blob([html], { type: 'text/html; charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (e) {
+    alert('HTML export failed: ' + e.message);
+  }
+}
+
 
 export async function createRoom() {
   const name = document.getElementById('roomNameInput').value.trim();

@@ -1,6 +1,7 @@
 'use strict';
 const path = require('path');
 const { createRotatingFileStream } = require('../lib/rotatingFileStream');
+const db = require('../db');
 
 // 两个独立的日志文件（带轮转）
 const SYS_LOG_FILE = path.join(__dirname, '../../logs/api-sys.log');
@@ -86,23 +87,37 @@ function apiLogger(req, res, next) {
  */
 function logResponse(req, res, timestamp, method, url, agentName) {
   // 在中间件阶段快照 body，防止响应结束后被修改
-  const bodySnapshot = AGENT_LOG_DETAIL ? req.body : null;
+  const bodySnapshot = req.body;
 
   res.on('finish', () => {
     const statusCode = res.statusCode;
+    let agentId = null;
+    if (bodySnapshot?.agent_id) {
+      try {
+        const row = db.prepare('SELECT name FROM agents WHERE id = ?').get(bodySnapshot.agent_id);
+        agentId = row ? row.name : `agent:${bodySnapshot.agent_id}`;
+      } catch (_) {
+        agentId = `agent:${bodySnapshot.agent_id}`;
+      }
+    }
     let logLine;
 
     if (agentName) {
       logLine = `${timestamp}: [${agentName}] ${method} ${url} ${statusCode}\n`;
+    } else if (agentId) {
+      logLine = `${timestamp}: [${agentId}] ${method} ${url} ${statusCode}\n`;
     } else {
       logLine = `${timestamp}: ${method} ${url} ${statusCode}\n`;
     }
 
-    const stream = agentName ? agentsStream : sysStream;
+    const stream = (agentName || agentId) ? agentsStream : sysStream;
+    process.stdout.write(logLine);
     stream.write(logLine);
 
     if (AGENT_LOG_DETAIL) {
-      stream.write(buildCurlLine(req, bodySnapshot, timestamp, agentName));
+      const curlLine = buildCurlLine(req, bodySnapshot, timestamp, agentName);
+      process.stdout.write(curlLine);
+      stream.write(curlLine);
     }
   });
 }

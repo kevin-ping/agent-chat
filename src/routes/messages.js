@@ -2,7 +2,7 @@
 const router = require('express').Router();
 const db = require('../db');
 const stmts = require('../db/statements');
-const { broadcast } = require('../realtime/broadcaster');
+const { broadcast, clearThinking } = require('../realtime/broadcaster');
 const { postMessage } = require('../services/messageService');
 const { checkRateLimit, validateTurn } = require('../services/turnService');
 const { getAgentsWithStatus } = require('../services/roomService');
@@ -14,8 +14,10 @@ router.post('/:roomId/messages', (req, res) => {
   const roomRow = stmts.getRoom.get(roomId);
   if (!roomRow) return res.status(404).json({ error: 'Room not found' });
 
-  const { content, msg_type, metadata } = req.body;
-  const agentId = req.authAgent?.id;  // integer
+  const { content, msg_type, metadata, agent_id } = req.body;
+
+  // agent_id is required in request body (integer agents.id)
+  const agentId = agent_id != null ? parseInt(agent_id, 10) : null;
 
   if (!content) return res.status(400).json({ error: 'content is required' });
 
@@ -48,9 +50,7 @@ router.post('/:roomId/messages', (req, res) => {
       return res.status(403).json({
         error: turnCheck.error,
         current_turn: room.current_turn,
-        hint: room.turn_mode === 'round_robin'
-          ? 'Do NOT retry. In round_robin mode, your webhook will be called automatically when it is your turn.'
-          : 'Wait for your turn. A moderator or admin must advance the turn.'
+        hint: 'Wait for your turn.'
       });
     }
   }
@@ -63,12 +63,31 @@ router.post('/:roomId/messages', (req, res) => {
       metadata
     });
 
+    if (agentId) {
+      clearThinking(roomId, agentId);
+      broadcast({ type: 'agent_thinking_done', room_id: roomId, agent_id: agentId });
+    }
+
     broadcast({
       type: 'new_message',
       room_id: roomId,
       message,
       current_turn: updatedRoom.current_turn
     });
+
+    if (updatedRoom.turn_mode === 'round_robin' && updatedRoom.discussion === 1
+        && updatedRoom.current_turn !== agentId) {
+      const openTopic = stmts.getOpenTopicForRoom.get(roomId);
+      broadcast({
+        type: 'turn_changed',
+        room_id: roomId,
+        current_turn: updatedRoom.current_turn,
+        discussion_active: true,
+        in_confirmation: updatedRoom.in_confirmation,
+        topic_id: updatedRoom.topic_id || null,
+        topic_title: openTopic?.title || null
+      });
+    }
 
     if (noCommentsUpdated) {
       broadcast({
@@ -116,8 +135,7 @@ router.delete('/:roomId/messages', (req, res) => {
   if (!roomRow) return res.status(404).json({ error: 'Room not found' });
 
   stmts.deleteRoomMessages.run(roomId);
-  const order = JSON.parse(stmts.getRoom.get(roomId)?.turn_order || '[]');
-  if (order.length > 0) stmts.updateRoomTurn.run(order[0], roomId);
+  stmts.deleteRoomTopics.run(roomId);
   broadcast({ type: 'messages_cleared', room_id: roomId });
   res.json({ ok: true });
 });
@@ -144,7 +162,6 @@ function deleteBatch(req, res) {
     return res.status(400).json({ error: 'ids array is required' });
   }
 
-  // ids are integer message ids
   const deleteMany = db.transaction((idList) => {
     const stmt = db.prepare('DELETE FROM messages WHERE id = ?');
     for (const id of idList) stmt.run(id);

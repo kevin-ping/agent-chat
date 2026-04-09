@@ -11,9 +11,9 @@ const stmts = {
     SELECT id, name, description, turn_mode, current_turn, turn_order, owner, room_password,
            datetime(created_at, 'localtime') as created_at,
            datetime(updated_at, 'localtime') as updated_at,
-           discussion, moderator_id, discussion_timeout,
+           discussion, moderator_id,
            datetime(last_activity_at, 'localtime') as last_activity_at,
-           in_confirmation
+           in_confirmation, topic_id
     FROM rooms WHERE id = ?
   `),
   listRooms: db.prepare(`
@@ -21,7 +21,7 @@ const stmts = {
            r.owner, r.room_password,
            datetime(r.created_at, 'localtime') as created_at,
            datetime(r.updated_at, 'localtime') as updated_at,
-           r.discussion, r.in_confirmation, r.moderator_id, r.discussion_timeout,
+           r.discussion, r.in_confirmation, r.moderator_id,
            datetime(r.last_activity_at, 'localtime') as last_activity_at,
            COUNT(m.id) as message_count
     FROM rooms r
@@ -31,6 +31,9 @@ const stmts = {
   `),
   updateRoomTurn: db.prepare(`
     UPDATE rooms SET current_turn = ?, updated_at = datetime('now') WHERE id = ?
+  `),
+  setRoomModerator: db.prepare(`
+    UPDATE rooms SET moderator_id = ?, updated_at = datetime('now') WHERE id = ?
   `),
   updateRoom: db.prepare(`
     UPDATE rooms
@@ -51,25 +54,21 @@ const stmts = {
 
   // ── Agents ─────────────────────────────────────────────────────────────────
   createAgent: db.prepare(`
-    INSERT INTO agents (agent_id, name, color, avatar_url, agent_hook_url,
-                        api_key, webhook_token, session_key, channel_type, channel_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO agents (agent_id, name, color, avatar_url, channel_type, channel_id, channel_name)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `),
   getAgent: db.prepare(`
-    SELECT id, agent_id, name, color, avatar_url, agent_hook_url,
-           api_key, webhook_token, session_key, channel_type, channel_id,
+    SELECT id, agent_id, name, color, avatar_url, channel_type, channel_id, channel_name,
            datetime(created_at, 'localtime') as created_at
     FROM agents WHERE id = ?
   `),
   getAgentByOpenClawId: db.prepare(`
-    SELECT id, agent_id, name, color, avatar_url, agent_hook_url,
-           api_key, webhook_token, session_key, channel_type, channel_id,
+    SELECT id, agent_id, name, color, avatar_url, channel_type, channel_id, channel_name,
            datetime(created_at, 'localtime') as created_at
     FROM agents WHERE agent_id = ?
   `),
   listAgents: db.prepare(`
-    SELECT id, agent_id, name, color, avatar_url, agent_hook_url,
-           webhook_token, session_key, channel_type, channel_id,
+    SELECT id, agent_id, name, color, avatar_url, channel_type, channel_id, channel_name,
            datetime(created_at, 'localtime') as created_at
     FROM agents ORDER BY name
   `),
@@ -78,15 +77,13 @@ const stmts = {
     SET name          = COALESCE(?, name),
         color         = COALESCE(?, color),
         avatar_url    = COALESCE(?, avatar_url),
-        agent_hook_url = COALESCE(?, agent_hook_url),
-        webhook_token = COALESCE(?, webhook_token),
-        session_key   = COALESCE(?, session_key),
         channel_type  = COALESCE(?, channel_type),
-        channel_id    = COALESCE(?, channel_id)
+        channel_id    = COALESCE(?, channel_id),
+        channel_name  = COALESCE(?, channel_name)
     WHERE id = ?
   `),
   updateAgentAvatar: db.prepare(`UPDATE agents SET avatar_url = ? WHERE id = ?`),
-  getAgentByApiKey: db.prepare(`SELECT id FROM agents WHERE api_key = ?`),
+  deleteAgent: db.prepare(`DELETE FROM agents WHERE id = ?`),
 
   // ── Topics ─────────────────────────────────────────────────────────────────
   insertTopic: db.prepare(`
@@ -186,6 +183,7 @@ const stmts = {
     ORDER BY m.created_at DESC LIMIT 50
   `),
   deleteRoomMessages: db.prepare(`DELETE FROM messages WHERE room_id = ?`),
+  deleteRoomTopics: db.prepare(`DELETE FROM topics WHERE room_id = ?`),
   deleteMessage: db.prepare(`DELETE FROM messages WHERE id = ?`),
   getMessageById: db.prepare(`
     SELECT id, room_id, agent_id, content, sequence, msg_type, metadata,
@@ -208,23 +206,28 @@ const stmts = {
   resetAllAgentsInRoom: db.prepare(`
     UPDATE agents_rooms SET no_comments = 0 WHERE room_id = ?
   `),
+  setAllAgentsConfirmed: db.prepare(`
+    UPDATE agents_rooms SET no_comments = 2 WHERE room_id = ?
+  `),
   getRoomDiscussion: db.prepare(`
     SELECT id, name, description, turn_mode, current_turn, turn_order, owner, room_password,
            datetime(created_at, 'localtime') as created_at,
            datetime(updated_at, 'localtime') as updated_at,
-           discussion, moderator_id, discussion_timeout,
+           discussion, moderator_id,
            datetime(last_activity_at, 'localtime') as last_activity_at,
-           in_confirmation
+           in_confirmation, topic_id
     FROM rooms WHERE id = ?
   `),
   setRoomDiscussion: db.prepare(`
     UPDATE rooms
-    SET discussion = ?, moderator_id = ?, discussion_timeout = ?,
-        last_activity_at = ?, in_confirmation = 0
+    SET discussion = ?, moderator_id = ?, last_activity_at = ?, in_confirmation = 0, topic_id = ?
     WHERE id = ?
   `),
   stopRoomDiscussion: db.prepare(`
-    UPDATE rooms SET discussion = 0, moderator_id = NULL, in_confirmation = 0 WHERE id = ?
+    UPDATE rooms SET discussion = 0, moderator_id = NULL, in_confirmation = 0, topic_id = NULL WHERE id = ?
+  `),
+  reopenTopic: db.prepare(`
+    UPDATE topics SET status = 'open', closed_at = NULL WHERE id = ?
   `),
   enterConfirmationRound: db.prepare(`UPDATE rooms SET in_confirmation = 1 WHERE id = ?`),
   exitConfirmationRound: db.prepare(`UPDATE rooms SET in_confirmation = 0 WHERE id = ?`),
@@ -237,8 +240,8 @@ const stmts = {
     INSERT OR IGNORE INTO agents_rooms (room_id, agent_id) VALUES (?, ?)
   `),
   getRoomAgents: db.prepare(`
-    SELECT a.id, a.agent_id, a.name, a.color, a.avatar_url, a.agent_hook_url,
-           a.webhook_token, a.session_key, a.channel_type, a.channel_id,
+    SELECT a.id, a.agent_id, a.name, a.color, a.avatar_url,
+           a.channel_type, a.channel_id, a.channel_name,
            datetime(a.created_at, 'localtime') as created_at
     FROM agents a
     INNER JOIN agents_rooms ar ON a.id = ar.agent_id
@@ -248,38 +251,10 @@ const stmts = {
     DELETE FROM agents_rooms WHERE room_id = ? AND agent_id = ?
   `),
 
-  // ── Settings ───────────────────────────────────────────────────────────────
-  getSetting: db.prepare(`SELECT value FROM settings WHERE key = ?`),
-  setSetting: db.prepare(`
-    INSERT OR REPLACE INTO settings (key, value, updated_at)
-    VALUES (?, ?, datetime('now'))
-  `),
-  getAllSettings: db.prepare(`
-    SELECT key, value, datetime(updated_at, 'localtime') as updated_at FROM settings
-  `),
-
-  // ── Pending registrations ──────────────────────────────────────────────────
-  createPendingReg: db.prepare(`
-    INSERT INTO pending_registrations
-      (invitation_token, agent_id, name, color, avatar_url, agent_hook_url,
-       webhook_token, session_key, channel_type, channel_id, expires_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `),
-  getPendingReg: db.prepare(`
-    SELECT * FROM pending_registrations WHERE invitation_token = ?
-  `),
-  deletePendingReg: db.prepare(`
-    DELETE FROM pending_registrations WHERE invitation_token = ?
-  `),
-
   // ── Resource limit counts ──────────────────────────────────────────────────
   countAllRooms: db.prepare(`SELECT COUNT(*) as count FROM rooms`),
   countAllAgents: db.prepare(`SELECT COUNT(*) as count FROM agents`),
   countRoomsByOwner: db.prepare(`SELECT COUNT(*) as count FROM rooms WHERE owner = ?`),
-  countAgentsByHookUrl: db.prepare(`SELECT COUNT(*) as count FROM agents WHERE agent_hook_url = ?`),
-  countPendingRegsByHookUrl: db.prepare(`
-    SELECT COUNT(*) as count FROM pending_registrations WHERE agent_hook_url = ?
-  `),
 };
 
 module.exports = stmts;

@@ -1,19 +1,32 @@
 'use strict';
-const { notifyAgent } = require('./webhookNotifier');
-const { notifyWaiters } = require('./longPoll');
 
 const clients = new Set();
+// key: `${roomId}:${agentId}`, value: timestamp (ms)
+const thinkingAgents = new Map();
 
 function broadcast(data) {
   const msg = JSON.stringify(data);
   for (const ws of clients) {
     if (ws.readyState === 1) ws.send(msg);
   }
+}
 
-  if (data.current_turn) {
-    notifyAgent(data.current_turn, data);
-    notifyWaiters(data.room_id, data.current_turn);
+function setThinking(roomId, agentId) {
+  thinkingAgents.set(`${roomId}:${agentId}`, Date.now());
+}
+
+function clearThinking(roomId, agentId) {
+  thinkingAgents.delete(`${roomId}:${agentId}`);
+}
+
+function clearRoomThinking(roomId) {
+  for (const key of thinkingAgents.keys()) {
+    if (key.startsWith(`${roomId}:`)) thinkingAgents.delete(key);
   }
 }
 
-module.exports = { clients, broadcast };
+function isThinking(roomId, agentId) {
+  return thinkingAgents.has(`${roomId}:${agentId}`);
+}
+
+module.exports = { clients, broadcast, setThinking, clearThinking, clearRoomThinking, isThinking };

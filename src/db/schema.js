@@ -13,11 +13,11 @@ function initSchema(db) {
       updated_at  DATETIME DEFAULT (datetime('now')),
       discussion  INT     DEFAULT 0,
       moderator_id INTEGER DEFAULT NULL,
-      discussion_timeout INT DEFAULT 300,
       last_activity_at DATETIME DEFAULT NULL,
       in_confirmation INT DEFAULT 0,
       owner       TEXT    DEFAULT NULL,
-      room_password TEXT  DEFAULT ''
+      room_password TEXT  DEFAULT '',
+      topic_id    INTEGER DEFAULT NULL
     );
 
     CREATE TABLE IF NOT EXISTS agents (
@@ -26,12 +26,9 @@ function initSchema(db) {
       name         TEXT    NOT NULL,
       color        TEXT    DEFAULT '#6366f1',
       avatar_url   TEXT    DEFAULT '',
-      agent_hook_url TEXT  DEFAULT '',
-      api_key      TEXT    DEFAULT '',
-      webhook_token TEXT   DEFAULT '',
-      session_key  TEXT    DEFAULT '',
       channel_type TEXT    DEFAULT NULL,
       channel_id   TEXT    DEFAULT NULL,
+      channel_name TEXT    DEFAULT NULL,
       created_at   DATETIME DEFAULT (datetime('now'))
     );
 
@@ -45,6 +42,7 @@ function initSchema(db) {
       metadata    TEXT    DEFAULT '{}',
       created_at  DATETIME DEFAULT (datetime('now')),
       topic_id    INTEGER DEFAULT NULL,
+      triggered   INTEGER DEFAULT 0,
       FOREIGN KEY (room_id) REFERENCES rooms(id),
       FOREIGN KEY (agent_id) REFERENCES agents(id),
       FOREIGN KEY (topic_id) REFERENCES topics(id)
@@ -75,38 +73,7 @@ function initSchema(db) {
     );
 
     CREATE INDEX IF NOT EXISTS idx_topics_room_status ON topics(room_id, status);
-
-    CREATE TABLE IF NOT EXISTS settings (
-      key        TEXT PRIMARY KEY,
-      value      TEXT NOT NULL,
-      updated_at DATETIME DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS pending_registrations (
-      id               INTEGER PRIMARY KEY AUTOINCREMENT,
-      invitation_token TEXT UNIQUE NOT NULL,
-      agent_id         TEXT NOT NULL,
-      name             TEXT NOT NULL,
-      color            TEXT DEFAULT '#6366f1',
-      avatar_url       TEXT DEFAULT '',
-      agent_hook_url   TEXT NOT NULL,
-      webhook_token    TEXT NOT NULL,
-      session_key      TEXT NOT NULL,
-      channel_type     TEXT DEFAULT 'telegram',
-      channel_id       TEXT NOT NULL,
-      created_at       DATETIME DEFAULT (datetime('now')),
-      expires_at       DATETIME NOT NULL
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_pending_reg_token ON pending_registrations(invitation_token);
   `);
-
-  // Set flag to prevent legacy INTEGER id + guid migration from running again
-  db.prepare(`
-    INSERT OR REPLACE INTO settings (key, value, updated_at)
-    VALUES ('guid_columns_removed', '1', datetime('now'))
-  `).run();
-  console.log('[Migration] Set guid_columns_removed flag (using integer-only schema)');
 }
 
 module.exports = { initSchema };

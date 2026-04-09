@@ -29,10 +29,8 @@ const LOG_SOURCES = [
   { file: 'api-agents.log',           service: 'api-agents',        level: 'info'  },
   { file: 'server.log',               service: 'agent-chat-server', level: 'info'  },
   { file: 'server-error.log',         service: 'agent-chat-server', level: 'error' },
-  { file: 'room-trigger.log',         service: 'room-trigger',      level: 'info'  },
-  { file: 'room-trigger-error.log',   service: 'room-trigger',      level: 'error' },
-  { file: 'timeout-daemon.log',       service: 'timeout-daemon',    level: 'info'  },
-  { file: 'timeout-daemon-error.log', service: 'timeout-daemon',    level: 'error' },
+  { file: 'agent-monitor.log',        service: 'agent-monitor',     level: 'info'  },
+  { file: 'agent-monitor-error.log',  service: 'agent-monitor',     level: 'error' },
 ];
 
 /**

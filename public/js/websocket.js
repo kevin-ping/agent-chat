@@ -6,13 +6,27 @@ import { scrollToBottom } from './utils.js';
 import { selectRoom } from './rooms.js';
 
 let ws = null;
+let reconnectDelay = 2000;
+let reconnectTimer = null;
+
+function scheduleReconnect() {
+  if (reconnectTimer !== null) return; // already scheduled
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connectWS();
+  }, reconnectDelay);
+  reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+}
 
 export function connectWS() {
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(`${proto}//${location.host}/ws`);
 
   ws.onopen = () => {
     console.log('[WS] Connected');
+    reconnectDelay = 2000; // reset backoff on success
     logState.wsConnected = true;
     renderLogBarStatus();
   };
@@ -20,7 +34,14 @@ export function connectWS() {
   ws.onclose = () => {
     logState.wsConnected = false;
     renderLogBarStatus();
-    setTimeout(connectWS, 2000);
+    scheduleReconnect();
+  };
+
+  ws.onerror = (err) => {
+    console.error('[WS] Error:', err);
+    logState.wsConnected = false;
+    renderLogBarStatus();
+    // onclose will fire after onerror, which handles reconnect
   };
 
   ws.onmessage = (event) => {
@@ -29,6 +50,19 @@ export function connectWS() {
     handleWSMessage(data);
   };
 }
+
+// Reconnect immediately when the tab becomes visible again
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+      if (reconnectTimer !== null) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      connectWS();
+    }
+  }
+});
 
 // NOTE: state.currentRoom stores room.id (integer).
 // WS events use room_id as integer id. Messages use id field for identity.
@@ -51,6 +85,11 @@ async function handleWSMessage(data) {
       const nmRoomIdx = state.rooms.findIndex(r => r.id === data.room_id);
       if (nmRoomIdx !== -1) {
         state.rooms[nmRoomIdx].message_count = (state.rooms[nmRoomIdx].message_count || 0) + 1;
+      }
+      // Clear thinking state for the agent that just posted
+      if (data.message && data.message.agent_id) {
+        const nmThinkSet = state.thinkingAgents.get(data.room_id);
+        if (nmThinkSet) nmThinkSet.delete(data.message.agent_id);
       }
       updateTurnBadge(data.room_id, data.current_turn);
       break;
@@ -119,6 +158,7 @@ async function handleWSMessage(data) {
         state.rooms[dsStopRoomIdx].agents = data.agents || [];
         renderSidebar();
       }
+      state.thinkingAgents.delete(data.room_id);
       break;
     }
 
@@ -168,6 +208,22 @@ async function handleWSMessage(data) {
     case 'turn_changed':
       updateTurnBadge(data.room_id, data.current_turn);
       break;
+
+    case 'agent_thinking': {
+      if (!state.thinkingAgents.has(data.room_id)) {
+        state.thinkingAgents.set(data.room_id, new Set());
+      }
+      state.thinkingAgents.get(data.room_id).add(data.agent_id);
+      renderSidebar();
+      break;
+    }
+
+    case 'agent_thinking_done': {
+      const thinkSet = state.thinkingAgents.get(data.room_id);
+      if (thinkSet) thinkSet.delete(data.agent_id);
+      renderSidebar();
+      break;
+    }
   }
 }
 
