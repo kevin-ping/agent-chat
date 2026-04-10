@@ -93,19 +93,22 @@
   height: 28px;
   border-radius: 50%;
   flex-shrink: 0;
+  isolation: isolate;
 }
 .room-item .avatar-ring-wrap.current-turn {
+  z-index: 2;
   box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.9);
 }
 .room-item .avatar-ring-wrap.current-turn::before,
 .room-item .avatar-ring-wrap.current-turn::after {
   content: '';
   position: absolute;
-  inset: 0;
+  inset: 1px;
   border-radius: 50%;
-  border: 2px solid rgba(56, 189, 248, 0.7);
+  border: 1.5px solid rgba(56, 189, 248, 0.7);
   animation: radioWave 2s ease-out infinite;
   pointer-events: none;
+  z-index: 1;
 }
 .room-item .avatar-ring-wrap.current-turn::after {
   animation-delay: 1s;
@@ -118,20 +121,23 @@
   height: 2px;
   border-radius: 1px;
   background: #22c55e;
+  z-index: 5;
 }
 /* ── Agent Thinking (openclaw running) ── */
 .room-item .thinking-ring {
   position: absolute;
-  inset: 0;
+  inset: -4px;
   border-radius: 50%;
-  border: 2.5px solid transparent;
+  border: 2px solid transparent;
   border-top-color: #fbbf24;
   border-right-color: #fbbf24;
   animation: spinnerRotate 0.9s linear infinite;
   pointer-events: none;
-  z-index: 4;
+  z-index: 3;
 }
 .room-item .room-agent-avatar {
+  position: relative;
+  z-index: 2;
   width: 28px;
   height: 28px;
   border-radius: 50%;

@@ -2,6 +2,23 @@
 const stmts = require('../db/statements');
 const { getAgentsWithStatus } = require('./roomService');
 
+function getRoomAgentIds(roomId) {
+  return stmts.getAllAgentsInRoom.all(roomId).map(a => a.agent_id);
+}
+
+function pickRandomRoomAgentId(roomId) {
+  const agentIds = getRoomAgentIds(roomId);
+  if (agentIds.length === 0) return null;
+  return agentIds[Math.floor(Math.random() * agentIds.length)];
+}
+
+function resolveModeratorForStop(roomId, preferredModeratorId) {
+  const agentIds = getRoomAgentIds(roomId);
+  if (agentIds.length === 0) return null;
+  if (preferredModeratorId != null && agentIds.includes(preferredModeratorId)) return preferredModeratorId;
+  return agentIds[Math.floor(Math.random() * agentIds.length)];
+}
+
 function getDiscussionStatus(roomId) {
   const room = stmts.getRoomDiscussion.get(roomId);
   if (!room) return null;
@@ -27,7 +44,14 @@ function getDiscussionStatus(roomId) {
   };
 }
 
-function startDiscussion(roomId, moderatorId, topicId) {
+function startDiscussion(roomId, topicId) {
+  // Randomly assign current_turn and moderator at start time
+  randomizeNextTurn(roomId);
+  randomizeNextModerator(roomId);
+
+  const freshRoom = stmts.getRoomDiscussion.get(roomId);
+  const moderatorId = freshRoom ? freshRoom.moderator_id : null;
+
   stmts.resetAllAgentsInRoom.run(roomId);
   stmts.setRoomDiscussion.run(1, moderatorId, new Date().toISOString(), topicId, roomId);
 
@@ -53,22 +77,20 @@ function randomizeNextTurn(roomId) {
 }
 
 function randomizeNextModerator(roomId) {
-  const agents = stmts.getAllAgentsInRoom.all(roomId);
-  if (!agents || agents.length === 0) return;
-  const picked = agents[Math.floor(Math.random() * agents.length)];
-  stmts.setRoomModerator.run(picked.agent_id, roomId);
+  const pickedId = pickRandomRoomAgentId(roomId);
+  if (pickedId == null) return;
+  stmts.setRoomModerator.run(pickedId, roomId);
 }
 
 function stopDiscussion(roomId, reason) {
   const openTopic = stmts.getOpenTopicForRoom.get(roomId);
   const roomRow   = stmts.getRoomDiscussion.get(roomId);
-  const moderatorId = roomRow ? roomRow.moderator_id : null;
+  const moderatorId = resolveModeratorForStop(roomId, roomRow ? roomRow.moderator_id : null);
 
-  // Topic is NOT closed here — the moderator closes it after writing the summary.
+  // Topic is NOT closed here — Python monitor handles moderator summary and topic close.
   stmts.setAllAgentsConfirmed.run(roomId);
   stmts.stopRoomDiscussion.run(roomId);
-  randomizeNextTurn(roomId);
-  randomizeNextModerator(roomId);
+  // current_turn and moderator_id are preserved; they will be randomly reassigned at next start.
   return {
     success: true,
     message: 'Discussion stopped: ' + reason,
@@ -111,12 +133,11 @@ function setAgentNoComments(agentId, roomId, value) {
   } else {
     const allConfirmed = agentsStatus.every(a => a.no_comments >= 2);
     if (allConfirmed) {
-      const oldModeratorId = updatedRoom.moderator_id;
+      const oldModeratorId = resolveModeratorForStop(roomId, updatedRoom.moderator_id);
       const openTopic = stmts.getOpenTopicForRoom.get(roomId);
       // Topic is NOT closed here — the moderator closes it after writing the summary.
       stmts.stopRoomDiscussion.run(roomId);
-      randomizeNextTurn(roomId);
-      randomizeNextModerator(roomId);
+      // current_turn and moderator_id are preserved; Python monitor will handle summary.
       consensusEvent = {
         type: 'discussion_stopped',
         reason: 'consensus',
@@ -129,4 +150,10 @@ function setAgentNoComments(agentId, roomId, value) {
   return { agentsWithStatus: getAgentsWithStatus(roomId), consensusEvent };
 }
 
-module.exports = { getDiscussionStatus, startDiscussion, stopDiscussion, setAgentNoComments };
+module.exports = {
+  getDiscussionStatus,
+  startDiscussion,
+  stopDiscussion,
+  setAgentNoComments,
+  resolveModeratorForStop
+};

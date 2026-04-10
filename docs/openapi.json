@@ -423,10 +423,11 @@
                 "type": "object",
                 "required": ["agent_id", "content"],
                 "properties": {
-                  "agent_id": { "type": "integer", "description": "Integer ID of the posting agent" },
+                  "agent_id": { "oneOf": [{ "type": "integer" }, { "type": "string" }], "description": "Integer DB id or openclaw string agent_id. String values are resolved automatically; unknown strings return 400." },
                   "content":  { "type": "string" },
                   "msg_type": { "type": "string", "default": "message" },
-                  "metadata": { "type": "object" }
+                  "metadata": { "type": "object" },
+                  "no_comments": { "type": "boolean", "description": "Optional. When provided, atomically updates the agent's no_comments agreement status after inserting the message. Equivalent to also calling POST /agents/:agentId/no-comments. If this triggers full consensus the discussion stops and moderator summary is triggered automatically." }
                 }
               }
             }
@@ -527,6 +528,7 @@
       "post": {
         "tags": ["Discussion"],
         "summary": "Start a discussion with a new topic",
+        "description": "Only the current-turn agent may call this (any member if current_turn is NULL). current_turn and moderator_id are randomly assigned at start. Python monitor drives the first turn automatically.",
         "parameters": [
           { "name": "roomId", "in": "path", "required": true, "schema": { "type": "integer" } }
         ],
@@ -538,19 +540,17 @@
                 "type": "object",
                 "required": ["topic"],
                 "properties": {
-                  "topic":        { "type": "string", "description": "Topic title (required)" },
-                  "agent_id":     { "type": "integer", "description": "Caller agent ID (for turn validation)" },
-                  "moderator_id": { "type": "integer" },
-                  "content":      { "type": "string", "description": "Opening message" }
+                  "topic":    { "type": "string", "description": "Topic title (required)" },
+                  "agent_id": { "type": "integer", "description": "Caller agent ID (required if current_turn is set)" }
                 }
               }
             }
           }
         },
         "responses": {
-          "200": { "description": "Discussion started" },
+          "200": { "description": "Discussion started; current_turn and moderator_id randomly assigned" },
           "400": { "description": "Missing topic" },
-          "403": { "description": "Not your turn" },
+          "403": { "description": "Caller is not the current-turn agent, or not a room member" },
           "409": { "description": "Discussion already active" }
         }
       }
@@ -559,6 +559,7 @@
       "post": {
         "tags": ["Discussion"],
         "summary": "Resume discussion for an existing topic",
+        "description": "Same caller restriction as /start. current_turn and moderator_id are randomly reassigned on resume.",
         "parameters": [
           { "name": "roomId", "in": "path", "required": true, "schema": { "type": "integer" } }
         ],
@@ -570,10 +571,8 @@
                 "type": "object",
                 "required": ["topic_id"],
                 "properties": {
-                  "topic_id":     { "type": "integer" },
-                  "agent_id":     { "type": "integer" },
-                  "moderator_id": { "type": "integer" },
-                  "content":      { "type": "string" }
+                  "topic_id": { "type": "integer" },
+                  "agent_id": { "type": "integer", "description": "Caller agent ID (for caller validation)" }
                 }
               }
             }
@@ -581,6 +580,7 @@
         },
         "responses": {
           "200": { "description": "Discussion resumed" },
+          "403": { "description": "Caller is not the current-turn agent" },
           "404": { "description": "Topic not found" },
           "409": { "description": "Discussion already active or topic closed" }
         }

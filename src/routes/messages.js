@@ -2,10 +2,11 @@
 const router = require('express').Router();
 const db = require('../db');
 const stmts = require('../db/statements');
-const { broadcast, clearThinking } = require('../realtime/broadcaster');
+const { broadcast, setThinking, clearThinking } = require('../realtime/broadcaster');
 const { postMessage } = require('../services/messageService');
 const { checkRateLimit, validateTurn } = require('../services/turnService');
 const { getAgentsWithStatus } = require('../services/roomService');
+const { setAgentNoComments } = require('../services/discussionService');
 const config = require('../config');
 
 // POST /api/rooms/:roomId/messages (roomId = integer)
@@ -14,10 +15,23 @@ router.post('/:roomId/messages', (req, res) => {
   const roomRow = stmts.getRoom.get(roomId);
   if (!roomRow) return res.status(404).json({ error: 'Room not found' });
 
-  const { content, msg_type, metadata, agent_id } = req.body;
+  const { content, msg_type, metadata, agent_id, no_comments } = req.body;
 
-  // agent_id is required in request body (integer agents.id)
-  const agentId = agent_id != null ? parseInt(agent_id, 10) : null;
+  // agent_id: accept integer or openclaw string id
+  let agentId = null;
+  if (agent_id != null) {
+    const parsed = parseInt(agent_id, 10);
+    if (!isNaN(parsed)) {
+      agentId = parsed;
+    } else {
+      const agentRow = stmts.getAgentByOpenClawId.get(String(agent_id));
+      if (agentRow) {
+        agentId = agentRow.id;
+      } else {
+        return res.status(400).json({ error: `Agent not found: ${agent_id}` });
+      }
+    }
+  }
 
   if (!content) return res.status(400).json({ error: 'content is required' });
 
@@ -87,6 +101,12 @@ router.post('/:roomId/messages', (req, res) => {
         topic_id: updatedRoom.topic_id || null,
         topic_title: openTopic?.title || null
       });
+
+      // Show thinking ring for the next agent immediately — reliable in-process broadcast
+      if (updatedRoom.current_turn !== null) {
+        setThinking(roomId, updatedRoom.current_turn);
+        broadcast({ type: 'agent_thinking', room_id: roomId, agent_id: updatedRoom.current_turn });
+      }
     }
 
     if (noCommentsUpdated) {
@@ -95,6 +115,27 @@ router.post('/:roomId/messages', (req, res) => {
         room_id: roomId,
         agents: getAgentsWithStatus(roomId)
       });
+    }
+
+    // Handle optional no_comments field: update agent agreement status in one API call
+    let noCommentsResult = null;
+    if (agentId && no_comments !== undefined && no_comments !== null) {
+      noCommentsResult = setAgentNoComments(agentId, roomId, no_comments);
+      broadcast({ type: 'agents_rooms_updated', room_id: roomId, agents: noCommentsResult.agentsWithStatus });
+    }
+
+    if (noCommentsResult?.consensusEvent) {
+      const { consensusEvent } = noCommentsResult;
+      const freshRoom = stmts.getRoom.get(roomId);
+      broadcast({
+        ...consensusEvent,
+        room_id: roomId,
+        agents: noCommentsResult.agentsWithStatus,
+        current_turn: freshRoom.current_turn,
+        topic_id: consensusEvent.topic_id ?? freshRoom.topic_id ?? null
+      });
+
+      // Moderator summary is handled by the Python monitor after detecting discussion_stopped.
     }
 
     res.status(201).json({ ...message, current_turn: updatedRoom.current_turn });
@@ -133,6 +174,11 @@ router.delete('/:roomId/messages', (req, res) => {
   const roomId = parseInt(req.params.roomId, 10);
   const roomRow = stmts.getRoom.get(roomId);
   if (!roomRow) return res.status(404).json({ error: 'Room not found' });
+
+  // Stop any active discussion before deleting topics to keep rooms state consistent
+  if (roomRow.discussion === 1) {
+    stmts.stopRoomDiscussion.run(roomId);
+  }
 
   stmts.deleteRoomMessages.run(roomId);
   stmts.deleteRoomTopics.run(roomId);

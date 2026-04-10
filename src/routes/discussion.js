@@ -4,19 +4,51 @@ const path = require('path');
 const router = require('express').Router();
 const stmts = require('../db/statements');
 const { broadcast } = require('../realtime/broadcaster');
-const { validateTurn } = require('../services/turnService');
-const { postMessage } = require('../services/messageService');
 const {
   getDiscussionStatus,
   startDiscussion,
   stopDiscussion,
   setAgentNoComments
 } = require('../services/discussionService');
+// openclawRunner kept for retrigger endpoint only; moderator summary is handled by Python monitor.
 const {
   triggerAgent,
-  buildFirstSpeakerPrompt,
-  buildModeratorSummaryPrompt
+  buildFirstSpeakerPrompt
 } = require('../lib/openclawRunner');
+
+// POST /api/rooms/:roomId/discussion/retrigger (roomId = integer)
+// Manually re-trigger the current_turn agent — use when a discussion is stalled.
+router.post('/:roomId/discussion/retrigger', (req, res) => {
+  const roomId = parseInt(req.params.roomId, 10);
+  const room = stmts.getRoom.get(roomId);
+  if (!room) return res.status(404).json({ error: 'Room not found' });
+
+  if (room.discussion !== 1) {
+    return res.status(400).json({ error: 'No active discussion in this room.' });
+  }
+
+  if (!room.current_turn) {
+    return res.status(400).json({ error: 'No current_turn set for this room.' });
+  }
+
+  const agent = stmts.getAgent.get(room.current_turn);
+  if (!agent) {
+    return res.status(404).json({ error: `Current turn agent (id=${room.current_turn}) not found.` });
+  }
+
+  const openTopic = stmts.getOpenTopicForRoom.get(roomId);
+  const prompt = buildFirstSpeakerPrompt(room, openTopic, agent);
+  triggerAgent(agent, roomId, prompt, {
+    trigger: 'manual_retrigger',
+    reason: 'stall_recovery'
+  });
+
+  res.json({
+    success: true,
+    message: `Re-triggered agent "${agent.name}" (id=${agent.id})`,
+    current_turn: room.current_turn
+  });
+});
 
 // GET /api/rooms/:roomId/discussion-status (roomId = integer)
 router.get('/:roomId/discussion-status', (req, res) => {
@@ -51,28 +83,19 @@ router.post('/:roomId/agents/:agentId/no-comments', (req, res) => {
       room_id: roomId,
       agents: agentsWithStatus,
       current_turn: freshRoomForConsensus.current_turn,
-      topic_id: freshRoomForConsensus.topic_id
+      topic_id: consensusEvent.topic_id ?? freshRoomForConsensus.topic_id ?? null
     });
 
-    // When consensus ends the discussion, trigger the moderator to summarise.
-    if (consensusEvent.type === 'discussion_stopped') {
-      const { moderator_id, topic_id } = consensusEvent;
-      if (moderator_id && topic_id) {
-        const moderator   = stmts.getAgent.get(moderator_id);
-        const topic       = stmts.getTopic.get(topic_id);
-        const allMessages = stmts.getTopicMessages.all(topic_id);
-        if (moderator && topic) {
-          const prompt = buildModeratorSummaryPrompt(freshRoomForConsensus, topic, moderator, allMessages);
-          triggerAgent(moderator, roomId, prompt);
-        }
-      }
-    }
+    // Moderator summary is handled by the Python monitor after detecting discussion_stopped.
   }
 
   res.json({ success: true, message: 'Agent no_comments status updated' });
 });
 
 // POST /api/rooms/:roomId/discussion/start (roomId = integer)
+// Only the agent matching current_turn may call this (if current_turn is set).
+// If current_turn is NULL (first discussion), any room member may call.
+// current_turn and moderator_id are randomly assigned at start; Python monitor drives the first turn.
 router.post('/:roomId/discussion/start', (req, res) => {
   const roomId = parseInt(req.params.roomId, 10);
   const room = stmts.getRoom.get(roomId);
@@ -92,7 +115,7 @@ router.post('/:roomId/discussion/start', (req, res) => {
     });
   }
 
-  const { moderator_id, topic, content, agent_id } = req.body;
+  const { topic, agent_id } = req.body;
 
   if (!topic || typeof topic !== 'string' || !topic.trim()) {
     return res.status(400).json({ error: 'topic (non-empty string) is required to start a discussion.' });
@@ -100,94 +123,58 @@ router.post('/:roomId/discussion/start', (req, res) => {
 
   const agentId = agent_id != null ? parseInt(agent_id, 10) : null;
 
-  if (agentId && room.turn_mode !== 'free' && room.current_turn !== null) {
-    const turnCheck = validateTurn(room, agentId);
-    if (!turnCheck.ok) {
+  // Caller validation: if current_turn is set, only that agent may start.
+  if (room.current_turn !== null && agentId !== null) {
+    if (Number(agentId) !== Number(room.current_turn)) {
       return res.status(403).json({
-        error: 'Not your turn. You cannot start the discussion now.',
-        current_turn: room.current_turn
+        error: 'Only the current-turn agent may start a new discussion.',
+        current_turn: room.current_turn,
+        hint: 'Wait for app instructions — the system will notify you when it is your turn.'
       });
     }
   }
 
-  let moderatorIntId = null;
-  if (moderator_id != null) {
-    moderatorIntId = typeof moderator_id === 'number' ? moderator_id : parseInt(moderator_id, 10);
-    const agentRow = stmts.getAgent.get(moderatorIntId);
-    if (!agentRow) return res.status(404).json({ error: 'Agent not found' });
+  // If agentId provided, verify agent is a room member.
+  if (agentId !== null) {
+    const membership = stmts.getAgentRoom.get(agentId, roomId);
+    if (!membership) {
+      return res.status(403).json({ error: 'Agent is not a member of this room.' });
+    }
   }
 
-  stmts.insertTopic.run(roomId, topic.trim());
-  const newTopic = stmts.getOpenTopicForRoom.get(roomId);
+  // Close any leftover open topics to avoid getOpenTopicForRoom returning a stale one
+  const leftoverTopics = stmts.listTopics.all(roomId).filter(t => t.status === 'open');
+  for (const t of leftoverTopics) {
+    stmts.closeTopic.run(t.id);
+  }
 
-  const result = startDiscussion(roomId, moderatorIntId, newTopic.id);
+  const insertResult = stmts.insertTopic.run(roomId, topic.trim());
+  // Use lastInsertRowid directly instead of re-querying, to avoid snapshot race conditions
+  const newTopic = stmts.getTopic.get(insertResult.lastInsertRowid);
+
+  // startDiscussion internally randomises current_turn and moderator_id.
+  const result = startDiscussion(roomId, newTopic.id);
   const freshRoomAfterStart = stmts.getRoom.get(roomId);
   broadcast({
     type: 'discussion_started',
     room_id: roomId,
-    moderator_id: moderatorIntId,
+    moderator_id: freshRoomAfterStart.moderator_id,
     agents: result.agentsWithStatus,
     topic: result.topic,
     current_turn: freshRoomAfterStart.current_turn
   });
 
-  // If no initial content, trigger the first agent (current_turn) via openclaw.
-  if (!content && freshRoomAfterStart.current_turn) {
-    const firstAgent = stmts.getAgent.get(freshRoomAfterStart.current_turn);
-    if (firstAgent) {
-      const prompt = buildFirstSpeakerPrompt(freshRoomAfterStart, result.topic, firstAgent);
-      triggerAgent(firstAgent, roomId, prompt);
-    }
-  }
-
-  let firstMessage = null;
-  if (content && agentId) {
-    try {
-      const freshRoom = stmts.getRoom.get(roomId);
-      const { message, updatedRoom } = postMessage(roomId, freshRoom, {
-        agentId,
-        content,
-        msgType: 'message',
-        metadata: {}
-      });
-      firstMessage = message;
-      broadcast({
-        type: 'new_message',
-        room_id: roomId,
-        message,
-        current_turn: updatedRoom.current_turn
-      });
-      if (updatedRoom.turn_mode === 'round_robin' && updatedRoom.discussion === 1
-          && updatedRoom.current_turn !== agentId) {
-        const openTopic = stmts.getOpenTopicForRoom.get(roomId);
-        broadcast({
-          type: 'turn_changed',
-          room_id: roomId,
-          current_turn: updatedRoom.current_turn,
-          discussion_active: true,
-          in_confirmation: updatedRoom.in_confirmation,
-          topic_id: updatedRoom.topic_id || null,
-          topic_title: openTopic?.title || null
-        });
-      }
-    } catch (e) {
-      return res.json({
-        success: result.success,
-        message: result.message,
-        roomStatus: result.roomStatus,
-        topic: result.topic,
-        first_message: null,
-        warning: `Discussion started but first message failed: ${e.message}`
-      });
-    }
-  }
+  // Python monitor detects discussion=1 and drives the first turn automatically.
 
   res.json({
     success: result.success,
     message: result.message,
-    roomStatus: result.roomStatus,
-    topic: result.topic,
-    first_message: firstMessage || null
+    roomStatus: {
+      ...result.roomStatus,
+      moderator_id: freshRoomAfterStart.moderator_id,
+      current_turn: freshRoomAfterStart.current_turn
+    },
+    topic: result.topic
   });
 });
 
@@ -211,7 +198,7 @@ router.post('/:roomId/discussion/resume', (req, res) => {
     });
   }
 
-  const { topic_id, moderator_id, content, agent_id } = req.body;
+  const { topic_id, agent_id } = req.body;
 
   const topicId = parseInt(topic_id, 10);
   if (!topic_id || isNaN(topicId)) {
@@ -233,91 +220,40 @@ router.post('/:roomId/discussion/resume', (req, res) => {
 
   const agentId = agent_id != null ? parseInt(agent_id, 10) : null;
 
-  if (agentId && room.turn_mode !== 'free' && room.current_turn !== null) {
-    const turnCheck = validateTurn(room, agentId);
-    if (!turnCheck.ok) {
+  // Caller validation: if current_turn is set, only that agent may resume.
+  if (room.current_turn !== null && agentId !== null) {
+    if (Number(agentId) !== Number(room.current_turn)) {
       return res.status(403).json({
-        error: 'Not your turn. You cannot resume the discussion now.',
-        current_turn: room.current_turn
+        error: 'Only the current-turn agent may resume the discussion.',
+        current_turn: room.current_turn,
+        hint: 'Wait for app instructions — the system will notify you when it is your turn.'
       });
     }
   }
 
-  let moderatorIntId = null;
-  if (moderator_id != null) {
-    moderatorIntId = typeof moderator_id === 'number' ? moderator_id : parseInt(moderator_id, 10);
-    const agentRow = stmts.getAgent.get(moderatorIntId);
-    if (!agentRow) return res.status(404).json({ error: 'Agent not found' });
-  }
-
-  const result = startDiscussion(roomId, moderatorIntId, topicId);
+  // startDiscussion internally randomises current_turn and moderator_id.
+  const result = startDiscussion(roomId, topicId);
   const freshRoomAfterResume = stmts.getRoom.get(roomId);
   broadcast({
     type: 'discussion_started',
     room_id: roomId,
-    moderator_id: moderatorIntId,
+    moderator_id: freshRoomAfterResume.moderator_id,
     agents: result.agentsWithStatus,
     topic: result.topic,
     current_turn: freshRoomAfterResume.current_turn
   });
 
-  // If no initial content, trigger the first agent (current_turn) via openclaw.
-  if (!content && freshRoomAfterResume.current_turn) {
-    const firstAgent = stmts.getAgent.get(freshRoomAfterResume.current_turn);
-    if (firstAgent) {
-      const prompt = buildFirstSpeakerPrompt(freshRoomAfterResume, result.topic, firstAgent);
-      triggerAgent(firstAgent, roomId, prompt);
-    }
-  }
-
-  let firstMessage = null;
-  if (content && agentId) {
-    try {
-      const freshRoom = stmts.getRoom.get(roomId);
-      const { message, updatedRoom } = postMessage(roomId, freshRoom, {
-        agentId,
-        content,
-        msgType: 'message',
-        metadata: {}
-      });
-      firstMessage = message;
-      broadcast({
-        type: 'new_message',
-        room_id: roomId,
-        message,
-        current_turn: updatedRoom.current_turn
-      });
-      if (updatedRoom.turn_mode === 'round_robin' && updatedRoom.discussion === 1
-          && updatedRoom.current_turn !== agentId) {
-        const openTopic = stmts.getOpenTopicForRoom.get(roomId);
-        broadcast({
-          type: 'turn_changed',
-          room_id: roomId,
-          current_turn: updatedRoom.current_turn,
-          discussion_active: true,
-          in_confirmation: updatedRoom.in_confirmation,
-          topic_id: updatedRoom.topic_id || null,
-          topic_title: openTopic?.title || null
-        });
-      }
-    } catch (e) {
-      return res.json({
-        success: result.success,
-        message: 'Discussion resumed',
-        roomStatus: result.roomStatus,
-        topic: result.topic,
-        first_message: null,
-        warning: `Discussion resumed but first message failed: ${e.message}`
-      });
-    }
-  }
+  // Python monitor detects discussion=1 and drives the first turn automatically.
 
   res.json({
     success: result.success,
     message: 'Discussion resumed',
-    roomStatus: result.roomStatus,
-    topic: result.topic,
-    first_message: firstMessage || null
+    roomStatus: {
+      ...result.roomStatus,
+      moderator_id: freshRoomAfterResume.moderator_id,
+      current_turn: freshRoomAfterResume.current_turn
+    },
+    topic: result.topic
   });
 });
 
@@ -329,18 +265,18 @@ router.post('/:roomId/discussion/stop', (req, res) => {
 
   const { reason } = req.body;
   const result = stopDiscussion(roomId, reason);
-  broadcast({ type: 'discussion_stopped', room_id: roomId, reason, agents: result.agentsWithStatus });
+  const freshRoom = stmts.getRoom.get(roomId);
+  broadcast({
+    type: 'discussion_stopped',
+    room_id: roomId,
+    reason,
+    agents: result.agentsWithStatus,
+    moderator_id: freshRoom.moderator_id,
+    current_turn: freshRoom.current_turn,
+    topic_id: result.topicId || null
+  });
 
-  // Trigger the moderator to summarise and close the topic.
-  if (result.moderatorId && result.topicId) {
-    const moderator   = stmts.getAgent.get(result.moderatorId);
-    const topic       = stmts.getTopic.get(result.topicId);
-    const allMessages = stmts.getTopicMessages.all(result.topicId);
-    if (moderator && topic) {
-      const prompt = buildModeratorSummaryPrompt(roomRow, topic, moderator, allMessages);
-      triggerAgent(moderator, roomId, prompt);
-    }
-  }
+  // Moderator summary is handled by the Python monitor after detecting discussion_stopped.
 
   res.json({ success: result.success, message: result.message, reason: result.reason });
 });

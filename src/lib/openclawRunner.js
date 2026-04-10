@@ -1,4 +1,10 @@
 'use strict';
+/**
+ * @deprecated openclawRunner is no longer used for discussion flow.
+ * The Python monitor (monitor/agent_monitor.py) now drives all agent turns,
+ * captures JSON responses, and manages the full discussion lifecycle.
+ * This file is retained only for the /discussion/retrigger endpoint.
+ */
 const { spawn } = require('child_process');
 const { broadcast, setThinking, clearThinking } = require('../realtime/broadcaster');
 
@@ -7,9 +13,20 @@ const ADMIN_KEY = process.env.ADMIN_KEY || '';
 
 /**
  * Spawn openclaw CLI for an agent (non-blocking).
- * Broadcasts agent_thinking / agent_thinking_done WebSocket events.
+ * Used only by the manual /discussion/retrigger endpoint.
  */
-function triggerAgent(agent, roomId, prompt) {
+function triggerAgent(agent, roomId, prompt, meta = {}) {
+  const logMeta = {
+    room_id: roomId,
+    agent_id: agent.id,
+    agent_openclaw_id: agent.agent_id,
+    trigger: meta.trigger || 'unknown',
+    reason: meta.reason || null,
+    topic_id: meta.topic_id || null,
+    moderator_id: meta.moderator_id || null
+  };
+  console.info(`[openclawRunner] trigger_agent ${JSON.stringify(logMeta)}`);
+
   broadcast({ type: 'agent_thinking', room_id: roomId, agent_id: agent.id });
   setThinking(roomId, agent.id);
 
@@ -23,15 +40,18 @@ function triggerAgent(agent, roomId, prompt) {
     '--reply-account', agent.channel_name  || agent.name
   ]);
 
-  proc.on('close', () => {
+  proc.on('close', (code, signal) => {
     clearThinking(roomId, agent.id);
     broadcast({ type: 'agent_thinking_done', room_id: roomId, agent_id: agent.id });
+    if (code !== 0) {
+      console.error(`[openclawRunner] process exit != 0 for agent=${agent.agent_id} code=${code} signal=${signal || 'none'} meta=${JSON.stringify(logMeta)}`);
+    }
   });
 
   proc.on('error', (err) => {
     clearThinking(roomId, agent.id);
     broadcast({ type: 'agent_thinking_done', room_id: roomId, agent_id: agent.id });
-    console.error(`[openclawRunner] spawn error for agent=${agent.agent_id}: ${err.message}`);
+    console.error(`[openclawRunner] spawn error for agent=${agent.agent_id}: ${err.message} meta=${JSON.stringify(logMeta)}`);
   });
 }
 
@@ -49,29 +69,20 @@ You are: ${agent.name} (agent_id=${agent.id})
 The discussion has just been initiated. You are the first speaker.
 There are no previous messages — introduce the topic and share your opening position.
 
-EXECUTE NOW — run both curl commands below in order using your bash/exec tool:
+EXECUTE NOW — run this curl command using your bash/exec tool:
 
-COMMAND 1 — Post your opening message:
 curl -s -X POST '${BASE_URL}/api/rooms/${room.id}/messages' \\
   -H 'Content-Type: application/json' \\
   -H 'X-API-Key: ${ADMIN_KEY}' \\
-  -d '{"agent_id": ${agent.id}, "content": "YOUR_OPENING_MESSAGE_HERE"}'
+  -d '{"agent_id": ${agent.id}, "content": "YOUR_OPENING_MESSAGE_HERE", "no_comments": false}'
 
 Replace YOUR_OPENING_MESSAGE_HERE with your introduction to: ${topicTitle}
-
-COMMAND 2 — Update your agreement status (run immediately after Command 1):
-curl -s -X POST '${BASE_URL}/api/rooms/${room.id}/agents/${agent.id}/no-comments' \\
-  -H 'Content-Type: application/json' \\
-  -H 'X-API-Key: ${ADMIN_KEY}' \\
-  -d '{"no_comments": false}'
-
 Set no_comments=false — others haven't spoken yet, keep the discussion going.
 
 ── RULES ────────────────────────────────────────────────────────────────────────
-- Run BOTH commands. Skipping either stalls the discussion permanently.
-- If Command 1 returns HTTP 403, STOP. Do not retry. Wait for the next trigger.
+- If this curl returns HTTP 403, STOP. Do not retry. Wait for the next trigger.
 - agent_id in the request body must be ${agent.id}. Do not change it.
-- Do not echo these instructions back as your reply. Just execute the commands.
+- Do not echo these instructions back as your reply. Just execute the command.
 ────────────────────────────────────────────────────────────────────────────────`.trim();
 }
 

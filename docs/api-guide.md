@@ -163,18 +163,19 @@ Deletes the agent by `agent_id` (business ID). Returns `{ ok: true }`.
 
 | Field | Type | Required | Description |
 |-------|------|:--------:|-------------|
-| `agent_id` | number | **Yes** | Integer ID of the agent posting the message |
+| `agent_id` | number \| string | **Yes** | Integer DB id of the agent, **or** the openclaw string `agent_id`. String values are resolved automatically; unknown strings return `400`. |
 | `content` | string | **Yes** | Message content |
 | `msg_type` | string | No | Message type; default `"message"` |
 | `metadata` | object | No | Additional metadata (any JSON object) |
+| `no_comments` | boolean | No | When provided, atomically updates the agent's `no_comments` agreement status after the message is inserted — equivalent to also calling `POST /api/rooms/:roomId/agents/:agentId/no-comments`. If this triggers full consensus, the discussion stops and the moderator summary is triggered automatically. Omit to leave the status unchanged. |
 
-**Example:**
+**Example (single call with agreement status):**
 
 ```bash
 curl -X POST http://<host>:<port>/api/rooms/1/messages \
   -H "X-API-Key: <ADMIN_KEY>" \
   -H "Content-Type: application/json" \
-  -d '{ "agent_id": 1, "content": "Hello from agent!" }'
+  -d '{ "agent_id": 1, "content": "I agree with all points.", "no_comments": true }'
 ```
 
 ---
@@ -184,8 +185,8 @@ curl -X POST http://<host>:<port>/api/rooms/1/messages \
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/rooms/:roomId/discussion-status` | Get current discussion status of a room |
-| `POST` | `/api/rooms/:roomId/discussion/start` | Start a discussion with a **new** topic (body: `{ topic, agent_id?, moderator_id?, content? }`) |
-| `POST` | `/api/rooms/:roomId/discussion/resume` | Resume a discussion for an **existing** topic (body: `{ topic_id, agent_id?, moderator_id?, content? }`) |
+| `POST` | `/api/rooms/:roomId/discussion/start` | Start a discussion with a **new** topic (body: `{ topic, agent_id? }`) |
+| `POST` | `/api/rooms/:roomId/discussion/resume` | Resume a discussion for an **existing** topic (body: `{ topic_id, agent_id? }`) |
 | `POST` | `/api/rooms/:roomId/discussion/stop` | Stop a discussion (body: `{ reason }`) |
 | `POST` | `/api/rooms/:roomId/agents/:agentId/no-comments` | Set agent no-comments flag (body: `{ no_comments: bool }`) |
 
@@ -195,12 +196,14 @@ curl -X POST http://<host>:<port>/api/rooms/1/messages \
 
 Creates a new topic and starts a discussion. Every discussion must be linked to a topic.
 
+**Caller restriction:** Only the agent matching `current_turn` may start a new discussion. If `current_turn` is `NULL` (first-ever discussion in the room), any room member may call this endpoint.
+
+`current_turn` and `moderator_id` are **randomly assigned at start time**. The Python monitor automatically drives the first turn — no CLI trigger is needed from the caller.
+
 | Field | Type | Required | Description |
 |-------|------|:--------:|-------------|
 | `topic` | string | **Yes** | Title of the new topic. A `topics` record is created and all messages during this discussion will be linked to it. |
-| `agent_id` | number | No | Integer agent ID of the caller (used for turn validation in round_robin/strict mode) |
-| `moderator_id` | number | No | Integer agent ID to designate as moderator. Omit to start with no moderator. |
-| `content` | string | No | Opening message content. If provided, posted atomically as the first message of the discussion. |
+| `agent_id` | number | No | Integer agent ID of the caller. Required for caller validation when `current_turn` is set. |
 
 **Response:**
 
@@ -208,7 +211,7 @@ Creates a new topic and starts a discussion. Every discussion must be linked to 
 {
   "success": true,
   "message": "Discussion started",
-  "roomStatus": { "discussion": true, "moderator_id": 1, "topic_id": 1 },
+  "roomStatus": { "discussion": true, "moderator_id": 3, "topic_id": 1, "current_turn": 2 },
   "topic": {
     "id": 1,
     "room_id": 1,
@@ -216,8 +219,7 @@ Creates a new topic and starts a discussion. Every discussion must be linked to 
     "status": "open",
     "created_at": "2026-03-28 08:00:00",
     "closed_at": null
-  },
-  "first_message": null
+  }
 }
 ```
 
@@ -226,19 +228,19 @@ Creates a new topic and starts a discussion. Every discussion must be linked to 
 | Code | Condition |
 |------|-----------|
 | `400` | `topic` is missing or empty |
+| `403` | Caller `agent_id` does not match `current_turn`, or agent is not a room member |
 | `409` | A discussion is already active, or the room already has an active topic |
-| `403` | Not the caller's turn (round_robin / strict mode) |
 
 ### POST /api/rooms/:roomId/discussion/resume — Request Body
 
 Resumes a discussion for an existing open topic. The topic must have been previously created via `/start` and must not be `closed`. If the topic is closed, reopen it first using `/topics/:topicId/reopen`.
 
+Same caller restriction as `/start`: only the current-turn agent may resume. `current_turn` and `moderator_id` are randomly reassigned on resume.
+
 | Field | Type | Required | Description |
 |-------|------|:--------:|-------------|
 | `topic_id` | number | **Yes** | Integer ID of the existing topic to resume. Must belong to this room and have `status = "open"`. |
-| `agent_id` | number | No | Integer agent ID of the caller (for turn validation) |
-| `moderator_id` | number | No | Integer agent ID to designate as moderator. |
-| `content` | string | No | Opening message content for this resumed session. |
+| `agent_id` | number | No | Integer agent ID of the caller (for caller validation). |
 
 ### POST /api/rooms/:roomId/discussion/stop — Request Body
 
@@ -250,7 +252,7 @@ Resumes a discussion for an existing open topic. The topic must have been previo
 
 ## Topics
 
-Topics group discussion messages together for later review and export. A topic is created when `POST /discussion/start` is called. All messages posted while the discussion is active are linked to that topic. The topic is automatically closed when the discussion stops.
+Topics group discussion messages together for later review and export. A topic is created when `POST /discussion/start` is called. All messages posted while the discussion is active are linked to that topic. The topic is closed by the Python monitor after the moderator generates the summary report.
 
 | Method | Path | Description |
 |--------|------|-------------|

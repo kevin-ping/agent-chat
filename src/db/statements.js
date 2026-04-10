@@ -224,7 +224,7 @@ const stmts = {
     WHERE id = ?
   `),
   stopRoomDiscussion: db.prepare(`
-    UPDATE rooms SET discussion = 0, moderator_id = NULL, in_confirmation = 0, topic_id = NULL WHERE id = ?
+    UPDATE rooms SET discussion = 0, in_confirmation = 0, topic_id = NULL WHERE id = ?
   `),
   reopenTopic: db.prepare(`
     UPDATE topics SET status = 'open', closed_at = NULL WHERE id = ?
